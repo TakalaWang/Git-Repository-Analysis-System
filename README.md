@@ -12,35 +12,12 @@ A Next.js 15 TypeScript application for analyzing Git repositories with Firebase
 - **Code Quality**: ESLint + Prettier
 - **CI/CD**: GitHub Actions
 
-## Project Structure
-
-```
-├── src/
-│   ├── app/
-│   │   ├── api/
-│   │   │   └── scan/          # API route for repository scanning
-│   │   ├── login/             # Authentication page
-│   │   ├── dashboard/         # Main dashboard
-│   │   ├── submit/            # Repository submission form
-│   │   └── ...
-│   ├── components/
-│   │   └── ui/                # Shadcn UI components
-│   └── lib/
-│       ├── firebase.ts        # Firebase client config
-│       └── firebase/
-│           └── admin.ts       # Firebase Admin SDK
-├── .github/
-│   └── workflows/
-│       └── firebase-deploy.yml # CI/CD pipeline
-└── ...
-```
-
 ## Getting Started
 
 ### Prerequisites
 
 - Node.js 20 or higher
-- npm or yarn
+- pnpm or yarn
 - Firebase project
 - Gemini API key
 
@@ -56,7 +33,7 @@ cd Git-Repository-Analysis-System
 2. Install dependencies:
 
 ```bash
-npm install
+pnpm install
 ```
 
 3. Set up environment variables:
@@ -67,20 +44,26 @@ cp .env.example .env.local
 
 Edit `.env.local` with your Firebase and Gemini API credentials.
 
+4. Set up Firebase Admin SDK:
+```bash
+cp service-account-file.example.json service-account-file.json
+```
+
+Fill in `service-account-file.json` with your Firebase service account credentials or paste file to root directory.
+
 ### Firebase Configuration
 
 1. Create a Firebase project at [Firebase Console](https://console.firebase.google.com/)
 2. Enable Authentication with GitHub provider
 3. Create a Firestore database
 4. Get your Firebase config and add to `.env.local`
-5. Update `.firebaserc` with your project ID
 
 ### Development
 
 Run the development server:
 
 ```bash
-npm run dev
+pnpm dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000) in your browser.
@@ -90,50 +73,19 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 Build the application for production:
 
 ```bash
-npm run build
+pnpm build
 ```
 
-### Deployment
-
-The application is automatically deployed to Firebase Hosting via GitHub Actions when pushing to the `main` branch.
-
-#### Manual Deployment
-
-1. Install Firebase CLI:
-
-```bash
-npm install -g firebase-tools
-```
-
-2. Login to Firebase:
-
-```bash
-firebase login
-```
-
-3. Build and deploy:
-
-```bash
-npm run build
-firebase deploy
-```
 
 ## Available Scripts
 
-- `npm run dev` - Start development server
-- `npm run build` - Build for production
-- `npm start` - Start production server
-- `npm run lint` - Run ESLint
-- `npm run format` - Format code with Prettier
-- `npm run format:check` - Check code formatting
+- `pnpm  dev` - Start development server
+- `pnpm build` - Build for production
+- `pnpm start` - Start production server
+- `pnpm lint` - Run ESLint
+- `pnpm format` - Format code with Prettier
+- `pnpm format:check` - Check code formatting
 
-## Features (To Be Implemented)
-
-- GitHub OAuth authentication
-- Repository URL submission
-- Repository analysis using Gemini AI
-- Dashboard with analysis results
-- User data persistence in Firestore
 
 ## Environment Variables
 
