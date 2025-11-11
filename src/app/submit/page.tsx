@@ -36,5 +36,5 @@ export default function SubmitPage() {
         </div>
       </main>
     </div>
-  )
+  );
 }
