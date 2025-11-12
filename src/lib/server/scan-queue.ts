@@ -200,6 +200,11 @@ async function processScan(scanId: string): Promise<void> {
       status: "running",
       startedAt: new Date(),
       updatedAt: new Date(),
+      progress: {
+        stage: "running",
+        message: "Initializing scan...",
+        percentage: 0,
+      },
     })
 
     // Get scan document
@@ -214,6 +219,15 @@ async function processScan(scanId: string): Promise<void> {
 
     // Step 1: Clone repository
     console.log(`Cloning repository: ${repoUrl}`)
+    await scanRef.update({
+      progress: {
+        stage: "cloning",
+        message: "Cloning repository...",
+        percentage: 20,
+      },
+      updatedAt: new Date(),
+    })
+
     const repoInfo = await cloneRepository(repoUrl, {
       depth: 1,
       timeout: 120000, // 2 minutes
@@ -222,24 +236,47 @@ async function processScan(scanId: string): Promise<void> {
     try {
       // Step 2: Analyze repository content
       console.log(`Analyzing repository content...`)
+      await scanRef.update({
+        progress: {
+          stage: "analyzing",
+          message: "Analyzing repository structure and code...",
+          percentage: 40,
+        },
+        updatedAt: new Date(),
+      })
+
       const repoContext = await analyzeRepoContent(repoInfo.localPath, repoUrl)
 
       // Step 3: Get AI analysis from Gemini
       console.log(`Requesting Gemini analysis...`)
+      await scanRef.update({
+        progress: {
+          stage: "generating",
+          message: "Generating AI-powered insights...",
+          percentage: 70,
+        },
+        updatedAt: new Date(),
+      })
+
       const analysis = await analyzeWithGemini(repoContext)
 
       // Step 4: Update scan document with results
-      await scanRef.update({
+      // Filter out undefined values to avoid Firestore errors
+      const repoName = repoInfo.repo || repoUrl.split("/").pop() || "Unknown Repository"
+
+      const updateData: Record<string, unknown> = {
         status: "succeeded",
         completedAt: new Date(),
         updatedAt: new Date(),
-        description: analysis.description,
-        techStack: analysis.techStack,
-        skillLevel: analysis.skillLevel,
-        skillLevelReasoning: analysis.skillLevelReasoning,
-        projectComplexity: analysis.projectComplexity,
-        keyFeatures: analysis.keyFeatures,
-        suggestedImprovements: analysis.suggestedImprovements,
+        repoName,
+        description: analysis.description || null,
+        techStack: analysis.techStack || null,
+        skillLevel: analysis.skillLevel || null,
+        progress: {
+          stage: "completed",
+          message: "Analysis complete!",
+          percentage: 100,
+        },
         stats: {
           totalFiles: repoContext.totalFiles,
           totalLines: repoContext.totalLines,
@@ -248,7 +285,32 @@ async function processScan(scanId: string): Promise<void> {
         provider: repoInfo.provider,
         owner: repoInfo.owner,
         repo: repoInfo.repo,
-      })
+      }
+
+      // Only add optional fields if they exist
+      if (analysis.categorizedTechStack) {
+        updateData.categorizedTechStack = analysis.categorizedTechStack
+      }
+      if (analysis.repositoryInfo) {
+        updateData.repositoryInfo = analysis.repositoryInfo
+      }
+      if (analysis.detailedAssessment) {
+        updateData.detailedAssessment = analysis.detailedAssessment
+      }
+      if (analysis.skillLevelReasoning) {
+        updateData.skillLevelReasoning = analysis.skillLevelReasoning
+      }
+      if (analysis.projectComplexity) {
+        updateData.projectComplexity = analysis.projectComplexity
+      }
+      if (analysis.keyFeatures) {
+        updateData.keyFeatures = analysis.keyFeatures
+      }
+      if (analysis.suggestedImprovements) {
+        updateData.suggestedImprovements = analysis.suggestedImprovements
+      }
+
+      await scanRef.update(updateData)
 
       console.log(`Scan completed successfully: ${scanId}`)
     } finally {

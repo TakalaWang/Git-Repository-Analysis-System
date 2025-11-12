@@ -19,7 +19,48 @@ import { getClientIp, hashIp } from "./ip-utils"
 import { NextRequest } from "next/server"
 
 /**
+ * Gets rate limit configuration from environment variables with fallback defaults.
+ *
+ * @private
+ * @returns {Object} Rate limit configuration object
+ */
+function getRateLimitConfig() {
+  const anonymousMaxRequests = parseInt(process.env.RATE_LIMIT_ANONYMOUS_MAX_REQUESTS || "3", 10)
+  const anonymousWindowHours = parseInt(process.env.RATE_LIMIT_ANONYMOUS_WINDOW_HOURS || "1", 10)
+  const authenticatedMaxRequests = parseInt(
+    process.env.RATE_LIMIT_AUTHENTICATED_MAX_REQUESTS || "20",
+    10
+  )
+  const authenticatedWindowHours = parseInt(
+    process.env.RATE_LIMIT_AUTHENTICATED_WINDOW_HOURS || "1",
+    10
+  )
+
+  const anonymousWindowMs = anonymousWindowHours * 60 * 60 * 1000
+  const authenticatedWindowMs = authenticatedWindowHours * 60 * 60 * 1000
+
+  return {
+    anonymous: {
+      maxRequests: anonymousMaxRequests,
+      windowMs: anonymousWindowMs,
+      windowLabel: anonymousWindowHours === 1 ? "1 hour" : `${anonymousWindowHours} hours`,
+    },
+    authenticated: {
+      maxRequests: authenticatedMaxRequests,
+      windowMs: authenticatedWindowMs,
+      windowLabel: authenticatedWindowHours === 1 ? "1 hour" : `${authenticatedWindowHours} hours`,
+    },
+  }
+}
+
+/**
  * Rate limit configuration for different user types.
+ *
+ * Configuration is loaded from environment variables with sensible defaults:
+ * - RATE_LIMIT_ANONYMOUS_MAX_REQUESTS (default: 3)
+ * - RATE_LIMIT_ANONYMOUS_WINDOW_HOURS (default: 1)
+ * - RATE_LIMIT_AUTHENTICATED_MAX_REQUESTS (default: 20)
+ * - RATE_LIMIT_AUTHENTICATED_WINDOW_HOURS (default: 1)
  *
  * @constant
  * @type {Object}
@@ -32,18 +73,7 @@ import { NextRequest } from "next/server"
  * @property {number} authenticated.windowMs - Time window in milliseconds
  * @property {string} authenticated.windowLabel - Human-readable window duration
  */
-export const RATE_LIMITS = {
-  anonymous: {
-    maxRequests: 3, // Maximum requests allowed
-    windowMs: 60 * 60 * 1000, // Time window in milliseconds (1 hour)
-    windowLabel: "1 hour",
-  },
-  authenticated: {
-    maxRequests: 20, // Maximum requests allowed
-    windowMs: 60 * 60 * 1000, // Time window in milliseconds (1 hour)
-    windowLabel: "1 hour",
-  },
-}
+export const RATE_LIMITS = getRateLimitConfig()
 
 /**
  * Result object returned by rate limit checks.
@@ -124,10 +154,9 @@ export async function checkRateLimit(
     // Filter out requests outside the time window
     requests = requests.filter((timestamp: number) => timestamp > windowStart)
 
-    // Check if limit exceeded
-    const allowed = requests.length < config.maxRequests
-    const remaining = Math.max(0, config.maxRequests - requests.length)
-    const resetAt = new Date(now + config.windowMs)
+    // Check if limit exceeded (before adding current request)
+    const currentCount = requests.length
+    const allowed = currentCount < config.maxRequests
 
     // If allowed, add current timestamp to requests array
     if (allowed) {
@@ -145,6 +174,10 @@ export async function checkRateLimit(
         { merge: true }
       )
     }
+
+    // Calculate remaining after update
+    const remaining = Math.max(0, config.maxRequests - (allowed ? currentCount + 1 : currentCount))
+    const resetAt = new Date(now + config.windowMs)
 
     return {
       allowed,

@@ -23,6 +23,13 @@ import { randomUUID } from "crypto"
 const execAsync = promisify(exec)
 
 /**
+ * Default timeout for git clone operations in milliseconds.
+ * Configurable via GIT_CLONE_TIMEOUT_SECONDS environment variable.
+ * @constant
+ */
+const DEFAULT_CLONE_TIMEOUT_MS = parseInt(process.env.GIT_CLONE_TIMEOUT_SECONDS || "300", 10) * 1000
+
+/**
  * Information about a Git repository.
  *
  * @interface GitRepoInfo
@@ -174,7 +181,7 @@ export async function cloneRepository(
     timeout?: number // Timeout in milliseconds
   } = {}
 ): Promise<GitRepoInfo> {
-  const { depth = 1, timeout = 60000 } = options
+  const { depth = 1, timeout = DEFAULT_CLONE_TIMEOUT_MS } = options
 
   // Validate URL
   if (!isValidGitUrl(url)) {

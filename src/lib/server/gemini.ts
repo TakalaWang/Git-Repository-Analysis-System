@@ -14,16 +14,43 @@ import {
   RepositoryContext,
 } from "./prompts"
 
-// Initialize Gemini AI client
+/**
+ * Gemini AI client instance.
+ * @private
+ */
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "")
 
-// Model configuration
-const MODEL_NAME = "gemini-2.5-pro"
+/**
+ * Gemini model name to use for analysis.
+ * Configurable via GEMINI_MODEL environment variable.
+ * @constant
+ */
+const MODEL_NAME = process.env.GEMINI_MODEL || "gemini-2.5-pro"
+
+/**
+ * Maximum number of retry attempts for failed Gemini API calls.
+ * Configurable via GEMINI_MAX_RETRIES environment variable.
+ * @constant
+ */
+const MAX_RETRIES = parseInt(process.env.GEMINI_MAX_RETRIES || "3", 10)
+
+/**
+ * Delay in milliseconds between retry attempts.
+ * Configurable via GEMINI_RETRY_DELAY_SECONDS environment variable.
+ * @constant
+ */
+const RETRY_DELAY_MS = parseInt(process.env.GEMINI_RETRY_DELAY_SECONDS || "60", 10) * 1000
+
+/**
+ * Configuration for Gemini AI text generation.
+ * Temperature and max output tokens can be configured via environment variables.
+ * @constant
+ */
 const GENERATION_CONFIG = {
-  temperature: 0.7,
+  temperature: parseFloat(process.env.GEMINI_TEMPERATURE || "0.7"),
   topP: 0.95,
   topK: 40,
-  maxOutputTokens: 8192,
+  maxOutputTokens: parseInt(process.env.GEMINI_MAX_OUTPUT_TOKENS || "8192", 10),
 }
 
 /**
@@ -45,6 +72,136 @@ const ANALYSIS_SCHEMA = {
         type: SchemaType.STRING as const,
       },
       nullable: false,
+    },
+    categorizedTechStack: {
+      type: SchemaType.OBJECT as const,
+      description: "Tech stack categorized by type",
+      properties: {
+        frontend: {
+          type: SchemaType.ARRAY as const,
+          items: { type: SchemaType.STRING as const },
+          nullable: true,
+        },
+        backend: {
+          type: SchemaType.ARRAY as const,
+          items: { type: SchemaType.STRING as const },
+          nullable: true,
+        },
+        database: {
+          type: SchemaType.ARRAY as const,
+          items: { type: SchemaType.STRING as const },
+          nullable: true,
+        },
+        devops: {
+          type: SchemaType.ARRAY as const,
+          items: { type: SchemaType.STRING as const },
+          nullable: true,
+        },
+        tools: {
+          type: SchemaType.ARRAY as const,
+          items: { type: SchemaType.STRING as const },
+          nullable: true,
+        },
+        other: {
+          type: SchemaType.ARRAY as const,
+          items: { type: SchemaType.STRING as const },
+          nullable: true,
+        },
+      },
+      nullable: true,
+    },
+    repositoryInfo: {
+      type: SchemaType.OBJECT as const,
+      description: "Enhanced repository information for HR understanding",
+      properties: {
+        name: {
+          type: SchemaType.STRING as const,
+          description: "Repository name",
+          nullable: false,
+        },
+        description: {
+          type: SchemaType.STRING as const,
+          description: "What the project does",
+          nullable: false,
+        },
+        teamSize: {
+          type: SchemaType.STRING as const,
+          description: "Estimated team size (e.g., '1-2 developers', '5-10 person team')",
+          nullable: true,
+        },
+        projectDuration: {
+          type: SchemaType.STRING as const,
+          description: "Estimated development time (e.g., '2-3 months', '6+ months')",
+          nullable: true,
+        },
+        complexity: {
+          type: SchemaType.STRING as const,
+          description: "Overall complexity (Low/Medium/High/Very High)",
+          nullable: false,
+        },
+        mainPurpose: {
+          type: SchemaType.STRING as const,
+          description: "Primary purpose of the project",
+          nullable: true,
+        },
+        targetAudience: {
+          type: SchemaType.STRING as const,
+          description: "Who uses this project",
+          nullable: true,
+        },
+      },
+      nullable: true,
+    },
+    detailedAssessment: {
+      type: SchemaType.OBJECT as const,
+      description: "Detailed skill and quality assessment",
+      properties: {
+        skillLevel: {
+          type: SchemaType.STRING as const,
+          format: "enum" as const,
+          enum: ["Beginner", "Junior", "Mid-level", "Senior"],
+          nullable: false,
+        },
+        reasoning: {
+          type: SchemaType.STRING as const,
+          description: "Detailed explanation of skill level assessment",
+          nullable: false,
+        },
+        strengths: {
+          type: SchemaType.ARRAY as const,
+          description: "Key strengths of the project",
+          items: { type: SchemaType.STRING as const },
+          nullable: false,
+        },
+        weaknesses: {
+          type: SchemaType.ARRAY as const,
+          description: "Areas needing improvement",
+          items: { type: SchemaType.STRING as const },
+          nullable: false,
+        },
+        recommendations: {
+          type: SchemaType.ARRAY as const,
+          description: "Specific recommendations for improvement",
+          items: { type: SchemaType.STRING as const },
+          nullable: false,
+        },
+        codeQuality: {
+          type: SchemaType.STRING as const,
+          description: "Code quality rating with explanation",
+          nullable: true,
+        },
+        architectureRating: {
+          type: SchemaType.STRING as const,
+          description: "Architecture quality rating with explanation",
+          nullable: true,
+        },
+        testCoverage: {
+          type: SchemaType.STRING as const,
+          description: "Testing coverage assessment",
+          nullable: true,
+        },
+      },
+      nullable: true,
     },
     skillLevel: {
       type: SchemaType.STRING as const,
@@ -107,23 +264,37 @@ const ANALYSIS_SCHEMA = {
 
 /**
  * Structured analysis result from Gemini AI.
- *
- * @interface AnalysisResult
- * @property {string} description - Natural language project description (2-3 sentences)
- * @property {string[]} techStack - Array of technologies, frameworks, and tools used
- * @property {'Beginner'|'Junior'|'Mid-level'|'Senior'} skillLevel - Required expertise level
- * @property {string} [skillLevelReasoning] - Explanation for skill level assessment
- * @property {Object} [projectComplexity] - Detailed complexity breakdown
- * @property {string} [projectComplexity.architecture] - Architecture complexity rating
- * @property {string} [projectComplexity.codeQuality] - Code quality assessment
- * @property {string} [projectComplexity.testCoverage] - Testing coverage level
- * @property {string} [projectComplexity.documentation] - Documentation quality
- * @property {string[]} [keyFeatures] - Notable features of the project
- * @property {string[]} [suggestedImprovements] - Recommendations for improvement
  */
 export interface AnalysisResult {
   description: string
   techStack: string[]
+  categorizedTechStack?: {
+    frontend?: string[]
+    backend?: string[]
+    database?: string[]
+    devops?: string[]
+    tools?: string[]
+    other?: string[]
+  }
+  repositoryInfo?: {
+    name: string
+    description: string
+    teamSize?: string
+    projectDuration?: string
+    complexity: string
+    mainPurpose?: string
+    targetAudience?: string
+  }
+  detailedAssessment?: {
+    skillLevel: "Beginner" | "Junior" | "Mid-level" | "Senior"
+    reasoning: string
+    strengths: string[]
+    weaknesses: string[]
+    recommendations: string[]
+    codeQuality?: string
+    architectureRating?: string
+    testCoverage?: string
+  }
   skillLevel: "Beginner" | "Junior" | "Mid-level" | "Senior"
   skillLevelReasoning?: string
   projectComplexity?: {
@@ -249,34 +420,74 @@ export async function analyzeRepository(
  * @private
  */
 async function getQuickAnalysis(repoUrl: string, readmeContent?: string): Promise<AnalysisResult> {
-  try {
-    // Use structured output for quick analysis too
-    const model = genAI.getGenerativeModel({
-      model: MODEL_NAME,
-      generationConfig: {
-        ...GENERATION_CONFIG,
-        responseMimeType: "application/json",
-        responseSchema: ANALYSIS_SCHEMA,
-      },
-    })
+  let lastError: Error | null = null
 
-    const prompt = getQuickSummaryPrompt(repoUrl, readmeContent)
-    const result = await model.generateContent(prompt)
-    const response = result.response
-    const text = response.text()
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      // Use structured output for quick analysis too
+      const model = genAI.getGenerativeModel({
+        model: MODEL_NAME,
+        generationConfig: {
+          ...GENERATION_CONFIG,
+          responseMimeType: "application/json",
+          responseSchema: ANALYSIS_SCHEMA,
+        },
+      })
 
-    // Parse JSON response (guaranteed format)
-    return JSON.parse(text) as AnalysisResult
-  } catch (error) {
-    console.error("Quick analysis failed:", error)
+      const prompt = getQuickSummaryPrompt(repoUrl, readmeContent)
+      const result = await model.generateContent(prompt)
+      const response = result.response
+      const text = response.text()
 
-    // Ultimate fallback - return generic result
-    return {
-      description: "Unable to analyze repository automatically. Please review manually.",
-      techStack: ["Unknown"],
-      skillLevel: "Mid-level",
-      skillLevelReasoning: "Automatic analysis failed",
+      // Parse JSON response (guaranteed format)
+      return JSON.parse(text) as AnalysisResult
+    } catch (error: unknown) {
+      lastError = error as Error
+      const errorObj = error as { status?: number; errorDetails?: Array<Record<string, unknown>> }
+
+      // Check if it's a quota/rate limit error (429)
+      if (errorObj.status === 429) {
+        // Extract retry delay from error if available
+        let retryDelay = RETRY_DELAY_MS
+
+        if (Array.isArray(errorObj.errorDetails)) {
+          const retryInfo = errorObj.errorDetails.find(
+            (detail) => detail["@type"] === "type.googleapis.com/google.rpc.RetryInfo"
+          ) as { retryDelay?: string } | undefined
+
+          if (retryInfo?.retryDelay) {
+            const seconds = parseInt(retryInfo.retryDelay.replace("s", ""))
+            retryDelay = seconds * 1000
+          }
+        }
+
+        if (attempt < MAX_RETRIES) {
+          console.warn(
+            `Gemini API quota exceeded (attempt ${attempt}/${MAX_RETRIES}). Retrying in ${retryDelay / 1000}s...`
+          )
+          await delay(retryDelay)
+          continue
+        }
+      }
+
+      console.error(`Quick analysis failed (attempt ${attempt}/${MAX_RETRIES}):`, error)
+
+      // If not a rate limit error or last attempt, break
+      if (errorObj.status !== 429 || attempt === MAX_RETRIES) {
+        break
+      }
     }
+  }
+
+  console.error("All quick analysis attempts failed:", lastError)
+
+  // Ultimate fallback - return generic result
+  return {
+    description:
+      "Unable to analyze repository automatically due to API rate limits. Please try again later.",
+    techStack: ["Unknown"],
+    skillLevel: "Mid-level",
+    skillLevelReasoning: "Automatic analysis unavailable - API quota exceeded",
   }
 }
 

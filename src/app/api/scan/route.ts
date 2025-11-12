@@ -104,6 +104,7 @@ export async function POST(request: NextRequest) {
         // Continue as anonymous user
       }
     }
+    console.log(`Received scan request for ${repoUrl} from ${userId || "anonymous user"}`)
 
     // Check rate limit
     const rateLimitResult = await checkRateLimit(request, userId)
