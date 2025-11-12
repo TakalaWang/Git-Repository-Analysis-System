@@ -1,18 +1,98 @@
 "use client"
 
 import { useState } from "react"
+import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Search, Github, Sparkles, BarChart } from "lucide-react"
+import { Alert, AlertDescription } from "@/components/ui/alert"
+import {
+  Search,
+  Github,
+  Sparkles,
+  BarChart,
+  Loader2,
+  AlertCircle,
+  Ban,
+  XCircle,
+} from "lucide-react"
+import { toast } from "sonner"
+import { useAuth } from "@/contexts/AuthContext"
 
 export default function Home() {
+  const router = useRouter()
+  const { user } = useAuth()
   const [repoUrl, setRepoUrl] = useState("")
+  const [isScanning, setIsScanning] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
-  const handleSubmit = (e: React.FormEvent) => {
+  /**
+   * Handle repository scan submission
+   * Validates URL and sends request to backend API
+   */
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    // TODO: Implement scan functionality
-    console.log("Scanning repository:", repoUrl)
+    setError(null)
+    setIsScanning(true)
+
+    try {
+      // Validate Git URL format
+      const urlPattern = /^https?:\/\/(github\.com|gitlab\.com|bitbucket\.org)\/[\w-]+\/[\w.-]+/
+      if (!urlPattern.test(repoUrl)) {
+        throw new Error("Please enter a valid GitHub, GitLab, or Bitbucket repository URL")
+      }
+
+      // Prepare request headers
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      }
+
+      // Add authentication token if user is logged in
+      if (user) {
+        try {
+          const idToken = await user.getIdToken()
+          headers["Authorization"] = `Bearer ${idToken}`
+        } catch (error) {
+          console.error("Failed to get ID token:", error)
+          // Continue without token (as anonymous user)
+        }
+      }
+
+      // Submit scan request to backend
+      const response = await fetch("/api/scan", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ repoUrl }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        // Handle rate limit error with detailed message
+        if (response.status === 429) {
+          const resetDate = data.resetAt ? new Date(data.resetAt).toLocaleTimeString() : "later"
+          const errorMsg = data.message || `Rate limit exceeded. Please try again at ${resetDate}.`
+          throw new Error(errorMsg)
+        }
+        throw new Error(data.error || "Failed to start repository scan")
+      }
+
+      // Show success message
+      toast.success("Scan started successfully!", {
+        description: "Analyzing repository... This may take 2-5 minutes.",
+      })
+
+      // Redirect to scan result page
+      router.push(`/scan/${data.scanId}`)
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : "An unexpected error occurred"
+      setError(errorMessage)
+      toast.error("Scan failed", {
+        description: errorMessage,
+      })
+    } finally {
+      setIsScanning(false)
+    }
   }
 
   return (
@@ -39,6 +119,21 @@ export default function Home() {
           {/* Repository Input */}
           <Card className="max-w-2xl mx-auto shadow-lg">
             <CardContent className="pt-6">
+              {/* Error Alert */}
+              {error && (
+                <Alert variant="destructive" className="mb-4">
+                  {error.toLowerCase().includes("rate limit") ? (
+                    <Ban className="h-4 w-4" />
+                  ) : error.toLowerCase().includes("timeout") ||
+                    error.toLowerCase().includes("internal") ? (
+                    <XCircle className="h-4 w-4" />
+                  ) : (
+                    <AlertCircle className="h-4 w-4" />
+                  )}
+                  <AlertDescription>{error}</AlertDescription>
+                </Alert>
+              )}
+
               <form onSubmit={handleSubmit} className="flex gap-2">
                 <div className="flex-1 relative">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
@@ -49,10 +144,18 @@ export default function Home() {
                     onChange={(e) => setRepoUrl(e.target.value)}
                     className="pl-10 h-12"
                     required
+                    disabled={isScanning}
                   />
                 </div>
-                <Button type="submit" size="lg" className="h-12 px-8">
-                  Analyze
+                <Button type="submit" size="lg" className="h-12 px-8" disabled={isScanning}>
+                  {isScanning ? (
+                    <>
+                      <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                      Scanning...
+                    </>
+                  ) : (
+                    "Analyze"
+                  )}
                 </Button>
               </form>
               <p className="text-sm text-gray-500 mt-4">

@@ -2,6 +2,7 @@ import type { Metadata } from "next"
 import "./globals.css"
 import { AuthProvider } from "@/contexts/AuthContext"
 import { Header } from "@/components/Header"
+import { Toaster } from "@/components/ui/sonner"
 
 export const metadata: Metadata = {
   title: "Git Repository Analysis System",
@@ -19,6 +20,7 @@ export default function RootLayout({
         <AuthProvider>
           <Header />
           {children}
+          <Toaster />
         </AuthProvider>
       </body>
     </html>
