@@ -108,7 +108,7 @@ export async function POST(request: NextRequest) {
       userEmail: userEmail || null,
       ip: clientIp,
       status: "queued",
-      isPublic: !userId, // Public if anonymous, private if authenticated
+      isPublic: !userId,
       provider: repoInfo.provider,
       owner: repoInfo.owner || null,
       repo: repoInfo.repo || null,
