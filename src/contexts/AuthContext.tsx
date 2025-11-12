@@ -7,8 +7,7 @@ import {
   signInWithPopup,
   signOut as firebaseSignOut,
 } from "firebase/auth"
-import { auth, githubProvider, db } from "@/lib/firebase-client"
-import { doc, setDoc, serverTimestamp } from "firebase/firestore"
+import { auth, githubProvider } from "@/lib/firebase-client"
 
 interface AuthContextType {
   user: User | null
@@ -41,21 +40,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const result = await signInWithPopup(auth, githubProvider)
       const user = result.user
 
-      await setDoc(
-        doc(db, "users", user.uid),
-        {
-          uid: user.uid,
-          email: user.email ?? null,
-          displayName: user.displayName ?? null,
-          photoURL: user.photoURL ?? null,
-          provider: "github",
-          updatedAt: serverTimestamp(),
-          createdAt: serverTimestamp(),
-        },
-        { merge: true }
-      )
+      // Get Firebase ID token to authenticate with backend
+      const idToken = await user.getIdToken()
 
-      console.log("Sign in successful and user profile saved.")
+      // Call backend API to sync user data
+      const response = await fetch("/api/auth/sync-user", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({
+          uid: user.uid,
+          email: user.email,
+          displayName: user.displayName,
+          photoURL: user.photoURL,
+          provider: "github",
+        }),
+      })
+
+      if (!response.ok) {
+        const error = await response.json()
+        console.error("Failed to sync user data:", error)
+        throw new Error(error.error || "Failed to sync user data")
+      }
+
+      console.log("Sign in successful and user profile synced via API")
     } catch (error) {
       console.error("Error signing in with GitHub:", error)
       throw error
