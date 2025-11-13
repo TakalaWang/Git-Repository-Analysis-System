@@ -7,12 +7,7 @@
  */
 
 import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai"
-import {
-  getSystemPrompt,
-  getAnalysisPrompt,
-  getQuickSummaryPrompt,
-  RepositoryContext,
-} from "./prompts"
+import { getSystemPrompt, getAnalysisPrompt, RepositoryContext } from "./prompts"
 
 /**
  * Gemini AI client instance.
@@ -35,7 +30,7 @@ const MODEL_NAME = process.env.GEMINI_MODEL || "gemini-2.5-flash"
 const MAX_RETRIES = parseInt(process.env.GEMINI_MAX_RETRIES || "3", 10)
 
 /**
- * Delay in milliseconds between retry attempts.
+ * Delay in milliseconds between retry attempts for rate limit errors.
  * Configurable via GEMINI_RETRY_DELAY_SECONDS environment variable.
  * @constant
  */
@@ -308,44 +303,130 @@ export interface AnalysisResult {
 }
 
 /**
- * Analyzes a repository using Gemini AI with automatic retry and fallback.
+ * Detects potentially malicious prompts in repository content.
  *
- * This is the main entry point for AI-powered repository analysis. It:
- * 1. Initializes a Gemini chat session with system context
- * 2. Sends repository analysis prompt with full context
- * 3. Parses and validates the JSON response
- * 4. Retries on failure (up to specified attempts)
- * 5. Falls back to quick summary if full analysis fails
- * 6. Returns generic result if all attempts fail
+ * Scans README and config files for suspicious patterns that might attempt to:
+ * - Inject commands or override system instructions
+ * - Extract sensitive information
+ * - Manipulate the AI's behavior
  *
- * The function implements a three-tier fallback strategy:
- * - Primary: Full analysis with complete context
- * - Secondary: Quick summary with README only (on failure)
- * - Tertiary: Generic fallback result (on complete failure)
+ * The detection is intentionally lenient to avoid false positives on legitimate
+ * repositories that might discuss AI, prompts, or contain instructional content.
  *
- * @param {RepositoryContext} context - Complete repository analysis context
- * @param {number} [retries=2] - Number of retry attempts on failure
- * @returns {Promise<AnalysisResult>} Structured analysis of the repository
- *
- * @throws Never throws - always returns a result (may be generic fallback)
+ * @param {RepositoryContext} context - Repository content to check
+ * @returns {boolean} True if malicious patterns detected, false otherwise
  *
  * @example
  * ```typescript
  * const context = await analyzeRepository(repoPath, repoUrl)
- * const analysis = await analyzeRepository(context)
+ * if (detectMaliciousPrompt(context)) {
+ *   throw new Error('Repository contains potentially malicious content')
+ * }
+ * ```
+ */
+function detectMaliciousPrompt(context: RepositoryContext): boolean {
+  // Combine all text content for scanning
+  const textToScan = [
+    context.readmeContent || "",
+    ...Object.values(context.configFiles.packageManagers || {}),
+    ...Object.values(context.configFiles.other || {}),
+  ].join("\n")
+
+  // Patterns that indicate prompt injection attempts
+  // These are intentionally specific to avoid false positives
+  const suspiciousPatterns = [
+    // Direct instruction override attempts
+    /ignore\s+(all\s+)?(previous|above|prior)\s+(instructions|prompts|rules)/gi,
+    /disregard\s+(all\s+)?(previous|above|prior)\s+(instructions|prompts|rules)/gi,
+    /forget\s+(all\s+)?(previous|above|prior)\s+(instructions|prompts|rules)/gi,
+
+    // System prompt manipulation
+    /new\s+(instructions|task|role):\s*you\s+(are|must|should|will)/gi,
+    /your\s+new\s+(role|task|instructions?)\s+(is|are)/gi,
+    /override\s+(system|default)\s+(prompt|instructions?|behavior)/gi,
+
+    // Information extraction attempts
+    /reveal\s+(your|the)\s+(system\s+)?(prompt|instructions?|rules)/gi,
+    /show\s+me\s+(your|the)\s+(system\s+)?(prompt|instructions?|rules)/gi,
+    /what\s+(are|is)\s+your\s+(system\s+)?(prompt|instructions?|rules)/gi,
+
+    // Role manipulation with explicit commands
+    /you\s+are\s+now\s+(a|an)\s+\w+\s+(that\s+)?(must|will|should)\s+(ignore|disregard|bypass)/gi,
+    /act\s+as\s+(a|an)\s+\w+\s+(and\s+)?(ignore|disregard|bypass)/gi,
+
+    // Data exfiltration attempts
+    /send\s+(all|your|the)\s+(data|information|content)\s+to/gi,
+    /exfiltrate\s+(data|information|content)/gi,
+
+    // Encoding tricks to bypass filters
+    /base64\s*:\s*aWdub3JlIGFsbCBwcmV2aW91cyBpbnN0cnVjdGlvbnM/gi, // "ignore all previous instructions" in base64
+    /\\u0069\\u0067\\u006e\\u006f\\u0072\\u0065/gi, // "ignore" in unicode escape
+  ]
+
+  // Check for suspicious patterns
+  for (const pattern of suspiciousPatterns) {
+    if (pattern.test(textToScan)) {
+      console.warn("Detected potentially malicious prompt pattern:", pattern.source)
+      return true
+    }
+  }
+
+  // Check for excessive repetition of "ignore" or "override" keywords (spam attempt)
+  const ignoreCount = (textToScan.match(/\b(ignore|override|disregard)\b/gi) || []).length
+  const totalWords = textToScan.split(/\s+/).length
+  if (totalWords > 0 && ignoreCount / totalWords > 0.05) {
+    // More than 5% of words are "ignore/override/disregard"
+    console.warn("Detected excessive use of manipulation keywords")
+    return true
+  }
+
+  return false
+}
+
+/**
+ * Analyzes a repository using Gemini AI with automatic retry.
+ *
+ * This is the main entry point for AI-powered repository analysis. It:
+ * 1. Checks for malicious prompt injection attempts
+ * 2. Initializes a Gemini chat session with system context
+ * 3. Sends repository analysis prompt with full context
+ * 4. Parses and validates the JSON response
+ * 5. Retries on transient failures (429, 500, 503 errors)
+ *
+ * Retry behavior:
+ * - 429 (rate limit): Waits RETRY_DELAY_MS (default 60s) before retry
+ * - 500/503 (server error): Waits 2s before retry
+ * - Other errors: No retry, throws immediately
+ * - Max retries: Configurable via MAX_RETRIES env var (default 3)
+ *
+ * @param {RepositoryContext} context - Complete repository analysis context
+ * @param {number} [retries] - Number of retry attempts remaining (defaults to MAX_RETRIES)
+ * @returns {Promise<AnalysisResult>} Structured analysis of the repository
+ *
+ * @throws {Error} If malicious prompt detected
+ * @throws {Error} If all analysis attempts fail
+ *
+ * @example
+ * ```typescript
+ * const context = await analyzeRepositoryContent(repoPath, repoUrl)
+ * const analysis = await analyzeRepositoryWithAI(context)
  *
  * console.log(analysis.description)
  * console.log(`Tech Stack: ${analysis.techStack.join(', ')}`)
  * console.log(`Skill Level: ${analysis.skillLevel}`)
- *
- * // With custom retry count
- * const analysis = await analyzeRepository(context, 3)
  * ```
  */
-export async function analyzeRepository(
+export async function analyzeRepositoryWithAI(
   context: RepositoryContext,
-  retries: number = 2
+  retries: number = MAX_RETRIES
 ): Promise<AnalysisResult> {
+  // Check for malicious prompt injection before processing
+  if (detectMaliciousPrompt(context)) {
+    throw new Error(
+      "Repository contains potentially malicious content that attempts to manipulate the analysis system"
+    )
+  }
+
   try {
     // Use structured output with response schema
     const model = genAI.getGenerativeModel({
@@ -396,94 +477,23 @@ export async function analyzeRepository(
   } catch (error) {
     console.error("Gemini analysis failed:", error)
 
-    // Retry logic
+    // Retry logic for transient errors
     if (retries > 0) {
-      console.log(`Retrying analysis... (${retries} attempts left)`)
-      await delay(2000) // Wait 2 seconds before retry
-      return analyzeRepository(context, retries - 1)
-    }
+      const err = error as { status?: number }
 
-    // Fallback to quick summary
-    console.log("Attempting quick summary as fallback...")
-    return getQuickAnalysis(context.repoUrl, context.readmeContent)
-  }
-}
-
-/**
- * Get quick analysis when full analysis fails (fallback).
- * Also uses structured output for consistent format.
- *
- * @param repoUrl - Repository URL
- * @param readmeContent - README content
- * @returns Simplified analysis result
- *
- * @private
- */
-async function getQuickAnalysis(repoUrl: string, readmeContent?: string): Promise<AnalysisResult> {
-  let lastError: Error | null = null
-
-  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-    try {
-      // Use structured output for quick analysis too
-      const model = genAI.getGenerativeModel({
-        model: MODEL_NAME,
-        generationConfig: {
-          ...GENERATION_CONFIG,
-          responseMimeType: "application/json",
-          responseSchema: ANALYSIS_SCHEMA,
-        },
-      })
-
-      const prompt = getQuickSummaryPrompt(repoUrl, readmeContent)
-      const result = await model.generateContent(prompt)
-      const response = result.response
-      const text = response.text()
-
-      // Parse JSON response (guaranteed format)
-      return JSON.parse(text) as AnalysisResult
-    } catch (error: unknown) {
-      lastError = error as Error
-      const errorObj = error as { status?: number; errorDetails?: Array<Record<string, unknown>> }
-
-      // Check if it's a quota/rate limit error (429)
-      if (errorObj.status === 429) {
-        // Extract retry delay from error if available
-        let retryDelay = RETRY_DELAY_MS
-
-        if (Array.isArray(errorObj.errorDetails)) {
-          const retryInfo = errorObj.errorDetails.find(
-            (detail) => detail["@type"] === "type.googleapis.com/google.rpc.RetryInfo"
-          ) as { retryDelay?: string } | undefined
-
-          if (retryInfo?.retryDelay) {
-            const seconds = parseInt(retryInfo.retryDelay.replace("s", ""))
-            retryDelay = seconds * 1000
-          }
-        }
-
-        if (attempt < MAX_RETRIES) {
-          console.warn(
-            `Gemini API quota exceeded (attempt ${attempt}/${MAX_RETRIES}). Retrying in ${retryDelay / 1000}s...`
-          )
-          await delay(retryDelay)
-          continue
-        }
-      }
-
-      console.error(`Quick analysis failed (attempt ${attempt}/${MAX_RETRIES}):`, error)
-
-      // If not a rate limit error or last attempt, break
-      if (errorObj.status !== 429 || attempt === MAX_RETRIES) {
-        break
+      // Retry on API errors (429 rate limit, 500 server errors, timeouts)
+      if (err.status === 429 || err.status === 500 || err.status === 503) {
+        const delayMs = err.status === 429 ? RETRY_DELAY_MS : 2000
+        console.log(`Retrying analysis... (${retries} attempts left, waiting ${delayMs}ms)`)
+        await delay(delayMs)
+        return analyzeRepositoryWithAI(context, retries - 1)
       }
     }
+
+    // No more retries or non-retryable error - throw and let scan-queue handle it
+    const errorMessage = error instanceof Error ? error.message : "Unknown error"
+    throw new Error(`Gemini AI analysis failed: ${errorMessage}`)
   }
-
-  console.error("All quick analysis attempts failed:", lastError)
-
-  // Throw error instead of returning fallback - let scan-queue handle it properly
-  const errorMessage = lastError instanceof Error ? lastError.message : "Unknown error"
-  throw new Error(`Gemini API analysis failed: ${errorMessage}`)
 }
 
 /**

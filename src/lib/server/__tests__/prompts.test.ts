@@ -6,12 +6,7 @@
  * Tests for prompt generation functions
  */
 
-import {
-  getSystemPrompt,
-  getAnalysisPrompt,
-  getQuickSummaryPrompt,
-  RepositoryContext,
-} from "../prompts"
+import { getSystemPrompt, getAnalysisPrompt, RepositoryContext } from "../prompts"
 
 describe("prompts", () => {
   describe("getSystemPrompt", () => {
@@ -42,7 +37,7 @@ describe("prompts", () => {
   })
 
   describe("getAnalysisPrompt", () => {
-    const mockContext: RepositoryContext = {
+    const mockContext = {
       repoUrl: "https://github.com/test/repo",
       readmeContent: "# Test Repository\n\nThis is a test.",
       languages: {
@@ -62,7 +57,7 @@ describe("prompts", () => {
       },
       totalFiles: 50,
       totalLines: 2500,
-    }
+    } as unknown as RepositoryContext
 
     it("should include repository URL", () => {
       const prompt = getAnalysisPrompt(mockContext)
@@ -190,43 +185,6 @@ describe("prompts", () => {
       const prompt = getAnalysisPrompt(contextWithGradle)
 
       expect(prompt).toContain("Gradle")
-    })
-  })
-
-  describe("getQuickSummaryPrompt", () => {
-    it("should include repository URL", () => {
-      const prompt = getQuickSummaryPrompt("https://github.com/test/repo")
-
-      expect(prompt).toContain("https://github.com/test/repo")
-    })
-
-    it("should include README if provided", () => {
-      const readme = "# Quick Test\n\nThis is a quick summary test."
-      const prompt = getQuickSummaryPrompt("https://github.com/test/repo", readme)
-
-      expect(prompt).toContain("Quick Test")
-    })
-
-    it("should handle missing README", () => {
-      const prompt = getQuickSummaryPrompt("https://github.com/test/repo")
-
-      expect(prompt).toContain("No README available")
-    })
-
-    it("should be shorter than full analysis prompt", () => {
-      const mockContext: RepositoryContext = {
-        repoUrl: "https://github.com/test/repo",
-        languages: { TypeScript: 10 },
-        fileStructure: ["file1.ts"],
-        packageFiles: {},
-        totalFiles: 10,
-        totalLines: 500,
-      }
-
-      const quickPrompt = getQuickSummaryPrompt(mockContext.repoUrl, "# README")
-      const fullPrompt = getAnalysisPrompt(mockContext)
-
-      expect(quickPrompt.length).toBeLessThan(fullPrompt.length)
     })
   })
 })
