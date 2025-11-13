@@ -34,12 +34,23 @@ yarn-error.log*
 .env*
 !.env.example
 
+# firebase config files
+.firebaserc
+
 # firebase service account file
 service-account-file.json
-
-# vercel
-.vercel
 
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# deployment
+logs/
+*.log
+backups/
+.pm2/
+
+# SSH keys
+*.pem
+*.key
+.ssh/
