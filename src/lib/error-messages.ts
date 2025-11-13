@@ -99,29 +99,3 @@ export function getUserFriendlyError(errorCode: ErrorCode | null | undefined): U
       }
   }
 }
-
-/**
- * Gets the appropriate status badge label for display.
- * Ensures consistent UI representation of scan states.
- *
- * @param {string} status - Scan status from database
- * @returns {string} User-friendly status label
- *
- * @example
- * ```typescript
- * getStatusLabel('succeeded') // "Completed"
- * getStatusLabel('failed')    // "Failed"
- * getStatusLabel('running')   // "Analyzing..."
- * getStatusLabel('queued')    // "Queued"
- * ```
- */
-export function getStatusLabel(status: string): string {
-  const statusLabels: Record<string, string> = {
-    queued: "Queued",
-    running: "Analyzing...",
-    succeeded: "Completed",
-    failed: "Failed",
-  }
-
-  return statusLabels[status] || status
-}

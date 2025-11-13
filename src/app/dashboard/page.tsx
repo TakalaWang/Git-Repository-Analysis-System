@@ -23,6 +23,7 @@ import {
 } from "lucide-react"
 import { subscribeUserScans } from "@/lib/firestore-client"
 import { QuotaDisplay } from "@/components/QuotaDisplay"
+import { getUserFriendlyError } from "@/lib/error-messages"
 import type { Scan } from "@/lib/types"
 
 export default function DashboardPage() {
@@ -84,9 +85,9 @@ export default function DashboardPage() {
   }, [user, authLoading, router])
 
   /**
-   * Get status icon based on scan status and error type
+   * Get status icon based on scan status and error code
    */
-  const getStatusIcon = (status: Scan["status"], errorMessage?: string | null) => {
+  const getStatusIcon = (status: Scan["status"], errorCode?: string | null) => {
     switch (status) {
       case "queued":
         return <Clock className="h-4 w-4 text-blue-500" />
@@ -95,50 +96,20 @@ export default function DashboardPage() {
       case "succeeded":
         return <CheckCircle2 className="h-4 w-4 text-green-500" />
       case "failed":
-        // Show different icons based on error type
-        if (errorMessage) {
-          const lowerError = errorMessage.toLowerCase()
-
-          // AI API errors
-          if (
-            lowerError.includes("gemini") ||
-            lowerError.includes("api analysis failed") ||
-            lowerError.includes("too many requests") ||
-            lowerError.includes("429")
-          ) {
+        // Show different icons based on error code
+        switch (errorCode) {
+          case "RATE_LIMIT_EXCEEDED":
+          case "GEMINI_RATE_LIMIT":
             return <Ban className="h-4 w-4 text-orange-500" />
-          }
-
-          // General rate limit
-          if (lowerError.includes("rate limit") || lowerError.includes("quota")) {
-            return <Ban className="h-4 w-4 text-orange-500" />
-          }
-
-          // System errors
-          if (
-            lowerError.includes("timeout") ||
-            lowerError.includes("internal") ||
-            lowerError.includes("unavailable") ||
-            lowerError.includes("failed to")
-          ) {
+          case "REPO_TOO_LARGE":
             return <XCircle className="h-4 w-4 text-red-500" />
-          }
-
-          // Permission errors
-          if (lowerError.includes("permission") || lowerError.includes("unauthorized")) {
+          case "MALICIOUS_CONTENT":
             return <ShieldAlert className="h-4 w-4 text-red-500" />
-          }
-
-          // User input errors
-          if (
-            lowerError.includes("not found") ||
-            lowerError.includes("invalid") ||
-            lowerError.includes("not accessible")
-          ) {
+          case "REPO_NOT_ACCESSIBLE":
             return <AlertCircle className="h-4 w-4 text-yellow-500" />
-          }
+          default:
+            return <AlertCircle className="h-4 w-4 text-red-500" />
         }
-        return <AlertCircle className="h-4 w-4 text-red-500" />
     }
   }
 
@@ -300,18 +271,20 @@ export default function DashboardPage() {
                   <div className="flex items-start justify-between">
                     <div className="flex-1">
                       <div className="flex items-center gap-2 mb-2">
-                        {getStatusIcon(scan.status, scan.error)}
+                        {getStatusIcon(scan.status, scan.errorCode)}
                         <CardTitle className="text-lg">
                           {scan.owner && scan.repo
                             ? `${scan.owner}/${scan.repo}`
                             : scan.repoName || scan.repo || scan.repoUrl}
                         </CardTitle>
                       </div>
-                      {/* Show description for successful scans, error message for failed scans */}
-                      {scan.status === "failed" && scan.error ? (
+                      {/* Show description for successful scans, user-friendly error for failed scans */}
+                      {scan.status === "failed" && scan.errorCode ? (
                         <CardDescription className="line-clamp-2 text-destructive">
-                          <span className="font-semibold">Error: </span>
-                          {scan.error}
+                          <span className="font-semibold">
+                            {getUserFriendlyError(scan.errorCode).title}:{" "}
+                          </span>
+                          {getUserFriendlyError(scan.errorCode).message}
                         </CardDescription>
                       ) : scan.description ? (
                         <CardDescription className="line-clamp-2">
