@@ -9,18 +9,31 @@ const createJestConfig = nextJest({
 // Add any custom config to be passed to Jest
 const config: Config = {
   coverageProvider: "v8",
-  testEnvironment: "node",
+  // Use jsdom for React components, node environment will be set per-file for API tests
+  testEnvironment: "jsdom",
   moduleNameMapper: {
     "^@/(.*)$": "<rootDir>/src/$1",
   },
-  testMatch: ["**/__tests__/**/*.test.ts", "**/?(*.)+(spec|test).ts"],
+  testMatch: ["**/__tests__/**/*.(test|spec).(ts|tsx)", "**/*.(test|spec).(ts|tsx)"],
   setupFilesAfterEnv: ["<rootDir>/jest.setup.ts"],
+  // Allow tests to specify their own environment via docblock
+  testEnvironmentOptions: {
+    customExportConditions: [""],
+  },
   collectCoverageFrom: [
     "src/**/*.{ts,tsx}",
     "!src/**/*.d.ts",
     "!src/**/*.stories.{ts,tsx}",
-    "!src/app/**", // Exclude Next.js app directory
+    "!src/**/__tests__/**",
   ],
+  coverageThreshold: {
+    global: {
+      branches: 50,
+      functions: 50,
+      lines: 50,
+      statements: 50,
+    },
+  },
 }
 
 // createJestConfig is exported this way to ensure that next/jest can load the Next.js config which is async

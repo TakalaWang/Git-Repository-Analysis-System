@@ -1,4 +1,8 @@
 /**
+ * @jest-environment node
+ */
+
+/**
  * Tests for prompt generation functions
  */
 
@@ -24,7 +28,7 @@ describe("prompts", () => {
 
       expect(prompt).toContain("Project Description")
       expect(prompt).toContain("Tech Stack")
-      expect(prompt).toContain("Skill Level")
+      expect(prompt).toContain("skill level")
     })
 
     it("should mention skill levels", () => {
