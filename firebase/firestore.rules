@@ -17,6 +17,14 @@ service cloud.firestore {
       allow write: if false; // Only backend can write
     }
     
+    // Rate limits collection - users can read their own rate limit data
+    // Authenticated users: read by userId
+    // Anonymous users: cannot read (would need IP hash which isn't available client-side)
+    match /rateLimits/{identifier} {
+      allow read: if request.auth != null && request.auth.uid == identifier;
+      allow write: if false; // Only backend can write
+    }
+    
     // Deny all other collections by default
     match /{document=**} {
       allow read, write: if false;

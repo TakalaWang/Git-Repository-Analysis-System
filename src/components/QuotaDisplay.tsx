@@ -16,6 +16,7 @@ import { Progress } from "@/components/ui/progress"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { AlertCircle, Zap } from "lucide-react"
+import { subscribeRateLimit } from "@/lib/firestore-client"
 import type { UserQuota } from "@/lib/types"
 
 interface QuotaDisplayProps {
@@ -67,50 +68,63 @@ export function QuotaDisplay({
   const [error, setError] = useState<string | null>(null)
 
   /**
-   * Fetch quota information
+   * Subscribe to quota information from Firestore
+   * - Authenticated users: Subscribe to their rateLimits document in real-time
+   * - Anonymous users: Show static quota (actual limit is enforced by server)
    */
   useEffect(() => {
-    const loadQuota = async () => {
-      try {
-        setIsLoading(true)
-        setError(null)
+    let mounted = true
 
-        let idToken: string | undefined
-        if (user) {
-          idToken = await user.getIdToken()
+    // For authenticated users, subscribe to their rate limit document
+    if (user) {
+      const unsubscribe = subscribeRateLimit(
+        user.uid,
+        true, // isAuthenticated
+        (quotaData) => {
+          if (!mounted) return
+          setQuota(quotaData)
+          onQuotaUpdate?.(quotaData)
+          setIsLoading(false)
+          setError(null)
+        },
+        (err) => {
+          if (!mounted) return
+          setError(err.message)
+          setIsLoading(false)
         }
+      )
 
-        // Fetch quota from API
-        const headers: HeadersInit = {
-          "Content-Type": "application/json",
-        }
-        if (idToken) {
-          headers["Authorization"] = `Bearer ${idToken}`
-        }
+      // Cleanup subscription on unmount or user change
+      return () => {
+        mounted = false
+        unsubscribe()
+      }
+    } else {
+      // For anonymous users, show static quota info
+      // Actual rate limiting is enforced by server when they make a scan request
+      // We can't track anonymous user's actual usage client-side without IP
+      const anonymousQuota: UserQuota = {
+        maxScans: 3,
+        usedScans: 0, // Server will track by IP
+        remainingScans: 3,
+        resetAt: new Date(Date.now() + 60 * 60 * 1000), // 1 hour from now
+        isAuthenticated: false,
+      }
 
-        const response = await fetch("/api/quota", { headers })
-        if (!response.ok) {
-          throw new Error("Failed to fetch quota information")
-        }
-
-        const data = await response.json()
-        const quotaData: UserQuota = {
-          ...data,
-          resetAt: new Date(data.resetAt),
-        }
-
-        setQuota(quotaData)
-        onQuotaUpdate?.(quotaData)
-      } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : "Failed to load quota"
-        setError(errorMessage)
-        console.error("Error fetching quota:", err)
-      } finally {
+      // Use setTimeout to defer state updates and avoid cascading renders
+      const timer = setTimeout(() => {
+        if (!mounted) return
+        setQuota(anonymousQuota)
+        onQuotaUpdate?.(anonymousQuota)
         setIsLoading(false)
+        setError(null)
+      }, 0)
+
+      return () => {
+        mounted = false
+        clearTimeout(timer)
       }
     }
-
-    loadQuota()
   }, [user, onQuotaUpdate])
 
   // Loading state
