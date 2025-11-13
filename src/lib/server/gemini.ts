@@ -25,7 +25,7 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "")
  * Configurable via GEMINI_MODEL environment variable.
  * @constant
  */
-const MODEL_NAME = process.env.GEMINI_MODEL || "gemini-2.5-pro"
+const MODEL_NAME = process.env.GEMINI_MODEL || "gemini-2.5-flash"
 
 /**
  * Maximum number of retry attempts for failed Gemini API calls.
@@ -481,14 +481,9 @@ async function getQuickAnalysis(repoUrl: string, readmeContent?: string): Promis
 
   console.error("All quick analysis attempts failed:", lastError)
 
-  // Ultimate fallback - return generic result
-  return {
-    description:
-      "Unable to analyze repository automatically due to API rate limits. Please try again later.",
-    techStack: ["Unknown"],
-    skillLevel: "Mid-level",
-    skillLevelReasoning: "Automatic analysis unavailable - API quota exceeded",
-  }
+  // Throw error instead of returning fallback - let scan-queue handle it properly
+  const errorMessage = lastError instanceof Error ? lastError.message : "Unknown error"
+  throw new Error(`Gemini API analysis failed: ${errorMessage}`)
 }
 
 /**

@@ -263,9 +263,15 @@ export async function isRepositoryAccessible(url: string): Promise<boolean> {
   try {
     const { url: normalizedUrl } = parseGitUrl(url)
 
-    // Use git ls-remote to check accessibility
-    await execAsync(`git ls-remote "${normalizedUrl}" HEAD`, {
+    // Use git ls-remote with GIT_TERMINAL_PROMPT=0 to prevent credential prompts
+    // This ensures we only accept public repositories (no local credentials used)
+    await execAsync(`GIT_TERMINAL_PROMPT=0 git ls-remote "${normalizedUrl}" HEAD`, {
       timeout: 10000, // 10 second timeout
+      env: {
+        ...process.env,
+        GIT_TERMINAL_PROMPT: "0", // Disable credential prompts
+        GIT_ASKPASS: "echo", // Prevent any password prompts
+      },
     })
 
     return true
@@ -485,5 +491,69 @@ export async function cleanupOldRepositories(): Promise<void> {
   } catch (error) {
     console.error("Failed to cleanup old repositories:", error)
     // Don't throw - cleanup is best effort
+  }
+}
+
+/**
+ * Get the latest commit hash from a remote Git repository.
+ *
+ * Fetches the HEAD commit hash without cloning the entire repository.
+ * This is used for cache validation - if the commit hash hasn't changed,
+ * we can reuse previous analysis results.
+ *
+ * @param {string} url - Git repository URL
+ * @returns {Promise<string>} The commit hash (SHA-1) of the latest commit on default branch
+ *
+ * @throws {Error} If URL is invalid
+ * @throws {Error} If git ls-remote command fails
+ * @throws {Error} If repository is not accessible
+ *
+ * @example
+ * ```typescript
+ * const commitHash = await getRemoteCommitHash('https://github.com/vercel/next.js')
+ * console.log(`Latest commit: ${commitHash}`) // e.g., "a1b2c3d4..."
+ *
+ * // Check if analysis is still valid
+ * const cachedAnalysis = await findCachedAnalysis(repoUrl)
+ * if (cachedAnalysis && cachedAnalysis.commitHash === commitHash) {
+ *   return cachedAnalysis // Use cached result
+ * }
+ * ```
+ */
+export async function getRemoteCommitHash(url: string): Promise<string> {
+  // Validate URL
+  if (!isValidGitUrl(url)) {
+    throw new Error("Invalid Git repository URL")
+  }
+
+  const repoInfo = parseGitUrl(url)
+
+  try {
+    // Use git ls-remote to get HEAD commit without cloning
+    // Set GIT_TERMINAL_PROMPT=0 and GIT_ASKPASS to avoid using local credentials
+    // This ensures private repositories are not accessible using local auth.
+    const { stdout } = await execAsync(`git ls-remote "${repoInfo.url}" HEAD`, {
+      timeout: 30000, // 30 second timeout
+      env: {
+        ...process.env,
+        GIT_TERMINAL_PROMPT: "0",
+        GIT_ASKPASS: "echo",
+      },
+    })
+
+    // Output format: "commit_hash\tHEAD"
+    const match = stdout.match(/^([a-f0-9]{40})\s+HEAD$/m)
+    if (!match) {
+      throw new Error("Failed to parse commit hash from git ls-remote output")
+    }
+
+    return match[1]
+  } catch (error) {
+    // If ls-remote fails it may be because the repo is private or inaccessible.
+    // Surface a clear error so the caller can reject private repositories.
+    if (error instanceof Error) {
+      throw new Error(`Failed to get commit hash: ${error.message}`)
+    }
+    throw new Error("Failed to get commit hash from repository")
   }
 }

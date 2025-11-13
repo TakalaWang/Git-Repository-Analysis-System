@@ -22,7 +22,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server"
-import { adminDb, adminAuth } from "@/lib/server/firebase-admin"
+import { adminDb } from "@/lib/server/firebase-admin"
 
 interface RouteContext {
   params: Promise<{ id: string }>
@@ -83,22 +83,8 @@ export async function GET(request: NextRequest, context: RouteContext) {
       return NextResponse.json({ error: "Scan ID is required" }, { status: 400 })
     }
 
-    // Get user authentication status
-    const authHeader = request.headers.get("authorization")
-    let userId: string | undefined
-
-    if (authHeader?.startsWith("Bearer ")) {
-      try {
-        const token = authHeader.substring(7)
-        const decodedToken = await adminAuth.verifyIdToken(token)
-        userId = decodedToken.uid
-      } catch (error) {
-        console.error("Token verification failed:", error)
-        // Continue as anonymous
-      }
-    }
-
     // Get scan document
+    // Note: Authentication is no longer required - all scans are public
     const scanRef = adminDb.collection("scans").doc(id)
     const scanDoc = await scanRef.get()
 
@@ -112,14 +98,10 @@ export async function GET(request: NextRequest, context: RouteContext) {
       return NextResponse.json({ error: "Invalid scan data" }, { status: 500 })
     }
 
-    // Check access permissions
-    // - Public scans: accessible by anyone
-    // - Private scans: only accessible by owner
-    if (!scanData.isPublic && scanData.userId !== userId) {
-      return NextResponse.json({ error: "Access denied" }, { status: 403 })
-    }
+    // All scans are now public - no permission check needed
+    // Any user can view any scan result
 
-    // Format response based on status
+    // Return scan data with timestamps as ISO strings
     const response: Record<string, unknown> = {
       id: scanData.id,
       repoUrl: scanData.repoUrl,

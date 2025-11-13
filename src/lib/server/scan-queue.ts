@@ -26,17 +26,7 @@ import { adminDb } from "./firebase-admin"
 import { cloneRepository, cleanupRepository } from "./git-handler"
 import { analyzeRepository as analyzeRepoContent } from "./repository-analyzer"
 import { analyzeRepository as analyzeWithGemini } from "./gemini"
-
-/**
- * Possible states for a scan job.
- *
- * @typedef {'queued'|'running'|'succeeded'|'failed'} ScanStatus
- * @property queued - Scan is waiting in queue
- * @property running - Scan is currently being processed
- * @property succeeded - Scan completed successfully
- * @property failed - Scan encountered an error
- */
-export type ScanStatus = "queued" | "running" | "succeeded" | "failed"
+import type { ScanStatus } from "@/lib/types"
 
 /**
  * Represents a scan job in the queue.
@@ -261,7 +251,6 @@ async function processScan(scanId: string): Promise<void> {
       const analysis = await analyzeWithGemini(repoContext)
 
       // Step 4: Update scan document with results
-      // Filter out undefined values to avoid Firestore errors
       const repoName = repoInfo.repo || repoUrl.split("/").pop() || "Unknown Repository"
 
       const updateData: Record<string, unknown> = {
@@ -277,14 +266,6 @@ async function processScan(scanId: string): Promise<void> {
           message: "Analysis complete!",
           percentage: 100,
         },
-        stats: {
-          totalFiles: repoContext.totalFiles,
-          totalLines: repoContext.totalLines,
-          languages: repoContext.languages,
-        },
-        provider: repoInfo.provider,
-        owner: repoInfo.owner,
-        repo: repoInfo.repo,
       }
 
       // Only add optional fields if they exist
@@ -296,18 +277,6 @@ async function processScan(scanId: string): Promise<void> {
       }
       if (analysis.detailedAssessment) {
         updateData.detailedAssessment = analysis.detailedAssessment
-      }
-      if (analysis.skillLevelReasoning) {
-        updateData.skillLevelReasoning = analysis.skillLevelReasoning
-      }
-      if (analysis.projectComplexity) {
-        updateData.projectComplexity = analysis.projectComplexity
-      }
-      if (analysis.keyFeatures) {
-        updateData.keyFeatures = analysis.keyFeatures
-      }
-      if (analysis.suggestedImprovements) {
-        updateData.suggestedImprovements = analysis.suggestedImprovements
       }
 
       await scanRef.update(updateData)
