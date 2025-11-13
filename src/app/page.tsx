@@ -19,6 +19,12 @@ import {
 import { toast } from "sonner"
 import { useAuth } from "@/contexts/AuthContext"
 
+/**
+ * Home page component with repository scan submission form.
+ * Allows users to submit repository URLs for AI-powered analysis.
+ *
+ * @returns {JSX.Element} The rendered home page
+ */
 export default function Home() {
   const router = useRouter()
   const { user } = useAuth()
@@ -27,8 +33,11 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null)
 
   /**
-   * Handle repository scan submission
-   * Validates URL and sends request to backend API
+   * Handles repository scan submission.
+   * Validates URL format, checks authentication, and submits to API.
+   *
+   * @param {React.FormEvent} e - Form submission event
+   * @returns {Promise<void>}
    */
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -96,7 +105,7 @@ export default function Home() {
   }
 
   return (
-    <div className="min-h-[calc(100vh-73px)] bg-linear-to-b from-gray-50 to-white">
+    <div className="min-h-[calc(100vh-73px)]">
       {/* Hero Section */}
       <section className="container mx-auto px-4 py-20">
         <div className="max-w-3xl mx-auto text-center">
@@ -105,13 +114,13 @@ export default function Home() {
             AI-Powered Repository Analysis
           </div>
 
-          <h1 className="text-5xl font-bold tracking-tight mb-6">
+          <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight mb-6">
             Analyze Any Git Repository
             <br />
             <span className="text-blue-600">In Seconds</span>
           </h1>
 
-          <p className="text-xl text-gray-600 mb-10">
+          <p className="text-lg sm:text-xl text-gray-600 mb-10">
             Get instant insights, tech stack analysis, and skill level assessment for any GitHub,
             GitLab, or Bitbucket repository.
           </p>
@@ -134,7 +143,7 @@ export default function Home() {
                 </Alert>
               )}
 
-              <form onSubmit={handleSubmit} className="flex gap-2">
+              <form onSubmit={handleSubmit} className="flex flex-col sm:flex-row gap-2">
                 <div className="flex-1 relative">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
                   <Input
@@ -147,7 +156,12 @@ export default function Home() {
                     disabled={isScanning}
                   />
                 </div>
-                <Button type="submit" size="lg" className="h-12 px-8" disabled={isScanning}>
+                <Button
+                  type="submit"
+                  size="lg"
+                  className="h-12 px-8 w-full sm:w-auto"
+                  disabled={isScanning}
+                >
                   {isScanning ? (
                     <>
                       <Loader2 className="mr-2 h-5 w-5 animate-spin" />

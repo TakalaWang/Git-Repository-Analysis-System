@@ -15,13 +15,20 @@ import {
 import { Github, LogOut, LayoutDashboard, User } from "lucide-react"
 import { useRouter } from "next/navigation"
 
+/**
+ * Header component with navigation and user authentication controls.
+ * Displays logo, navigation links, and user menu with authentication state management.
+ *
+ * @returns {JSX.Element} The rendered header component
+ */
 export function Header() {
   const { user, signOut, loading } = useAuth()
   const router = useRouter()
 
   /**
-   * Handle user sign out
-   * Redirects to home page after successful sign out
+   * Handles user sign out and redirects to home page.
+   *
+   * @returns {Promise<void>}
    */
   const handleSignOut = async () => {
     await signOut()
@@ -29,7 +36,9 @@ export function Header() {
   }
 
   /**
-   * Get user initials for avatar fallback
+   * Generates user initials from display name or email for avatar fallback.
+   *
+   * @returns {string} User initials (up to 2 characters)
    */
   const getUserInitials = () => {
     if (user?.displayName) {
@@ -44,7 +53,8 @@ export function Header() {
   }
 
   return (
-    <header className="border-b bg-background text-foreground sticky top-0 z-50 shadow-sm">
+    // Use card background for header so it visually separates from the page background
+    <header className="border-b bg-card text-foreground sticky top-0 z-50 shadow-sm">
       <div className="container mx-auto px-4 py-4 flex items-center justify-between">
         {/* Logo */}
         <Link href="/" className="flex items-center gap-2 hover:opacity-80 transition-opacity">
@@ -53,13 +63,18 @@ export function Header() {
         </Link>
 
         {/* Navigation */}
-        <nav>
+        <nav className="flex items-center gap-2">
           {loading ? (
             // Loading skeleton
             <div className="h-9 w-20 animate-pulse bg-gray-200 rounded-md" />
           ) : user ? (
             // Authenticated user menu
             <div className="flex items-center gap-4">
+              <Link href="/">
+                <Button variant="ghost" size="sm">
+                  Home
+                </Button>
+              </Link>
               <Link href="/dashboard">
                 <Button variant="ghost" size="sm" className="gap-2">
                   <LayoutDashboard className="h-4 w-4" />
@@ -104,13 +119,20 @@ export function Header() {
               </DropdownMenu>
             </div>
           ) : (
-            // Guest user - sign in button
-            <Link href="/login">
-              <Button size="sm" className="gap-2">
-                <Github className="h-4 w-4" />
-                Sign In
-              </Button>
-            </Link>
+            // Guest user - Home and sign in buttons
+            <>
+              <Link href="/">
+                <Button variant="ghost" size="sm">
+                  Home
+                </Button>
+              </Link>
+              <Link href="/login">
+                <Button size="sm" className="gap-2">
+                  <Github className="h-4 w-4" />
+                  Sign In
+                </Button>
+              </Link>
+            </>
           )}
         </nav>
       </div>

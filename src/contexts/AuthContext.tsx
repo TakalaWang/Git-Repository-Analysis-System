@@ -9,10 +9,17 @@ import {
 } from "firebase/auth"
 import { auth, githubProvider } from "@/lib/firebase-client"
 
+/**
+ * Authentication context type definition.
+ */
 interface AuthContextType {
+  /** Current authenticated user or null */
   user: User | null
+  /** Loading state during authentication */
   loading: boolean
+  /** Sign in with GitHub OAuth */
   signInWithGithub: () => Promise<void>
+  /** Sign out current user */
   signOut: () => Promise<void>
 }
 
@@ -23,6 +30,14 @@ const AuthContext = createContext<AuthContextType>({
   signOut: async () => {},
 })
 
+/**
+ * Authentication provider component that manages user authentication state.
+ * Handles GitHub OAuth sign-in, user session management, and backend synchronization.
+ *
+ * @param {Object} props - Component props
+ * @param {React.ReactNode} props.children - Child components
+ * @returns {JSX.Element} The authentication provider wrapper
+ */
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
@@ -35,6 +50,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return unsubscribe
   }, [])
 
+  /**
+   * Initiates GitHub OAuth sign-in flow and syncs user data with backend.
+   *
+   * @throws {Error} If authentication fails or backend sync fails
+   * @returns {Promise<void>}
+   */
   const signInWithGithub = async () => {
     try {
       const result = await signInWithPopup(auth, githubProvider)
@@ -67,11 +88,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       console.log("Sign in successful and user profile synced via API")
     } catch (error) {
+      const firebaseError = error as { code?: string }
+      if (firebaseError.code === "auth/popup-closed-by-user") {
+        throw error
+      }
       console.error("Error signing in with GitHub:", error)
       throw error
     }
   }
 
+  /**
+   * Signs out the current user.
+   *
+   * @returns {Promise<void>}
+   */
   const signOut = async () => {
     await firebaseSignOut(auth)
   }
@@ -83,4 +113,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   )
 }
 
+/**
+ * Hook to access authentication context.
+ * Must be used within AuthProvider.
+ *
+ * @returns {AuthContextType} Authentication context value
+ */
 export const useAuth = () => useContext(AuthContext)

@@ -26,7 +26,10 @@ export default function LoginPage() {
       await signInWithGithub()
     } catch (err) {
       const firebaseError = err as { code?: string; message?: string }
-      console.error("Sign in error:", err)
+      // Don't spam console when user explicitly closed the popup
+      if (firebaseError.code !== "auth/popup-closed-by-user") {
+        console.error("Sign in error:", err)
+      }
 
       let errorMessage = "Failed to sign in. Please try again."
 
@@ -56,11 +59,11 @@ export default function LoginPage() {
   }
 
   return (
-    <section className="min-h-[calc(100vh-73px)] bg-linear-to-b from-gray-50 to-white flex items-center justify-center px-4">
+    <section className="min-h-[calc(100vh-73px)] flex items-center justify-center px-4">
       <div className="w-full max-w-6xl grid md:grid-cols-2 gap-8 items-center">
         {/* Left - Feature List */}
-        <div className="space-y-6">
-          <h1 className="text-4xl font-bold tracking-tight">
+        <div className="space-y-6 mb-8 md:mb-0">
+          <h1 className="text-3xl sm:text-4xl font-bold tracking-tight">
             Sign in to unlock
             <br />
             <span className="text-blue-600">powerful features</span>

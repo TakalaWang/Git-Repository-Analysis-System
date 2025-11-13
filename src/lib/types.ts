@@ -1,19 +1,30 @@
 /**
  * Shared Type Definitions
  *
- * This file contains type definitions shared between frontend and backend.
- * All types are exported for use across the application.
+ * Centralized type definitions used across the entire application.
+ * This module provides consistent type safety for both frontend and backend.
  *
- * @module lib/types
+ * @module types
  */
 
+// ============================================================================
+// SCAN TYPES
+// ============================================================================
+
 /**
- * Scan status enum
+ * Possible states of a scan job throughout its lifecycle.
+ *
+ * @typedef {'queued' | 'running' | 'succeeded' | 'failed'} ScanStatus
  */
 export type ScanStatus = "queued" | "running" | "succeeded" | "failed"
 
 /**
- * Scan progress stages
+ * Real-time progress information for a running scan.
+ *
+ * @interface ScanProgress
+ * @property {string} stage - Current processing stage
+ * @property {string} message - Human-readable status message
+ * @property {number} percentage - Completion percentage (0-100)
  */
 export interface ScanProgress {
   stage: "queued" | "cloning" | "analyzing" | "generating" | "completed"
@@ -22,7 +33,76 @@ export interface ScanProgress {
 }
 
 /**
- * Categorized tech stack
+ * Complete scan document as stored in Firestore.
+ * Represents a single repository analysis request and its results.
+ *
+ * @interface Scan
+ * @property {string} id - Unique scan identifier (Firestore document ID)
+ * @property {string} repoUrl - Git repository URL
+ * @property {string | null} repoName - Repository display name
+ * @property {string | null} userId - User ID if authenticated, null if anonymous
+ * @property {string | null} userEmail - User email if authenticated
+ * @property {string} ip - Client IP address (for rate limiting)
+ * @property {string | null} ipHash - Hashed IP for anonymous users
+ * @property {ScanStatus} status - Current scan status
+ * @property {ScanProgress} [progress] - Real-time progress updates
+ * @property {string | null} provider - Git hosting provider (github/gitlab/bitbucket)
+ * @property {string | null} owner - Repository owner/organization
+ * @property {string | null} repo - Repository name
+ * @property {string | null} commitHash - Git commit SHA at scan time (for caching)
+ * @property {Date | string} createdAt - Timestamp when scan was created
+ * @property {Date | string} updatedAt - Timestamp of last update
+ * @property {Date | string | null} startedAt - When processing started
+ * @property {Date | string | null} completedAt - When processing finished
+ * @property {string | null} error - Error message if scan failed
+ * @property {string | null} description - AI-generated project description
+ * @property {string[] | null} techStack - List of detected technologies
+ * @property {CategorizedTechStack} [categorizedTechStack] - Technologies grouped by category
+ * @property {string | null} skillLevel - Required developer skill level
+ * @property {RepositoryInfo} [repositoryInfo] - Enhanced repository metadata
+ * @property {DetailedAssessment} [detailedAssessment] - Comprehensive code assessment
+ */
+export interface Scan {
+  id: string
+  repoUrl: string
+  repoName?: string
+  userId: string | null
+  userEmail: string | null
+  ip: string
+  ipHash?: string | null
+  status: ScanStatus
+  progress?: ScanProgress
+  provider: string | null
+  owner: string | null
+  repo: string | null
+  commitHash: string | null
+  createdAt: Date | string
+  updatedAt: Date | string
+  startedAt: Date | string | null
+  completedAt: Date | string | null
+  error: string | null
+  description: string | null
+  techStack: string[] | null
+  categorizedTechStack?: CategorizedTechStack
+  skillLevel: string | null
+  repositoryInfo?: RepositoryInfo
+  detailedAssessment?: DetailedAssessment
+}
+
+// ============================================================================
+// ANALYSIS RESULT TYPES
+// ============================================================================
+
+/**
+ * Technologies grouped by their primary function.
+ *
+ * @interface CategorizedTechStack
+ * @property {string[]} [frontend] - Frontend frameworks and libraries
+ * @property {string[]} [backend] - Backend frameworks and runtimes
+ * @property {string[]} [database] - Database systems and ORMs
+ * @property {string[]} [devops] - CI/CD, containerization, cloud services
+ * @property {string[]} [tools] - Development tools and utilities
+ * @property {string[]} [other] - Uncategorized technologies
  */
 export interface CategorizedTechStack {
   frontend?: string[]
@@ -34,7 +114,20 @@ export interface CategorizedTechStack {
 }
 
 /**
- * Enhanced repository information for HR
+ * Enhanced repository information optimized for non-technical understanding.
+ * Provides context about project scope, complexity, and purpose.
+ *
+ * @interface RepositoryInfo
+ * @property {string} name - Repository name
+ * @property {string} description - Project description
+ * @property {string} [teamSize] - Estimated team size (e.g., "1-2 developers")
+ * @property {string} [projectDuration] - Estimated development time (e.g., "2-3 months")
+ * @property {string} complexity - Overall complexity rating (Low/Medium/High/Very High)
+ * @property {number} [linesOfCode] - Total lines of code
+ * @property {number} [filesCount] - Total number of files
+ * @property {string[]} [languages] - Programming languages used
+ * @property {string} [mainPurpose] - Primary purpose of the project
+ * @property {string} [targetAudience] - Intended users of the project
  */
 export interface RepositoryInfo {
   name: string
@@ -50,7 +143,17 @@ export interface RepositoryInfo {
 }
 
 /**
- * Detailed assessment with reasoning
+ * Comprehensive code quality and skill assessment with detailed reasoning.
+ *
+ * @interface DetailedAssessment
+ * @property {string} skillLevel - Required developer expertise level
+ * @property {string} reasoning - Explanation for the skill level assessment
+ * @property {string[]} strengths - Key strengths and positive aspects
+ * @property {string[]} weaknesses - Areas needing improvement
+ * @property {string[]} recommendations - Specific improvement suggestions
+ * @property {string} [codeQuality] - Code quality rating and explanation
+ * @property {string} [architectureRating] - Architecture quality assessment
+ * @property {string} [testCoverage] - Testing coverage evaluation
  */
 export interface DetailedAssessment {
   skillLevel: string
@@ -63,37 +166,18 @@ export interface DetailedAssessment {
   testCoverage?: string
 }
 
-/**
- * Scan document structure in Firestore
- */
-export interface Scan {
-  id: string
-  repoUrl: string
-  repoName?: string
-  userId: string | null
-  userEmail: string | null
-  ip: string
-  status: ScanStatus
-  progress?: ScanProgress
-  isPublic: boolean
-  provider: string | null
-  owner: string | null
-  repo: string | null
-  createdAt: Date | string
-  updatedAt: Date | string
-  startedAt: Date | string | null
-  completedAt: Date | string | null
-  description: string | null
-  techStack: string[] | null
-  categorizedTechStack?: CategorizedTechStack
-  skillLevel: string | null
-  repositoryInfo?: RepositoryInfo
-  detailedAssessment?: DetailedAssessment
-  error: string | null
-}
+// ============================================================================
+// RATE LIMITING TYPES
+// ============================================================================
 
 /**
- * Rate limit information
+ * Rate limit check result.
+ *
+ * @interface RateLimitInfo
+ * @property {number} limit - Maximum requests allowed in the time window
+ * @property {number} remaining - Number of requests remaining
+ * @property {Date} resetAt - When the rate limit window resets
+ * @property {number} used - Number of requests already used
  */
 export interface RateLimitInfo {
   limit: number
@@ -103,7 +187,14 @@ export interface RateLimitInfo {
 }
 
 /**
- * User quota information
+ * User quota information for authenticated users.
+ *
+ * @interface UserQuota
+ * @property {number} maxScans - Maximum scans allowed in the time period
+ * @property {number} usedScans - Number of scans already used
+ * @property {number} remainingScans - Number of scans remaining
+ * @property {Date} resetAt - When the quota resets
+ * @property {boolean} isAuthenticated - Whether user is authenticated
  */
 export interface UserQuota {
   maxScans: number
@@ -113,29 +204,33 @@ export interface UserQuota {
   isAuthenticated: boolean
 }
 
+// ============================================================================
+// UI CONFIGURATION TYPES
+// ============================================================================
+
 /**
- * Skill level type
+ * Developer skill level categories.
+ *
+ * @typedef {'Beginner' | 'Junior' | 'Mid-level' | 'Senior'} SkillLevel
  */
 export type SkillLevel = "Beginner" | "Junior" | "Mid-level" | "Senior"
 
 /**
- * Skill level color mapping
- */
-export const SKILL_LEVEL_COLORS: Record<SkillLevel, string> = {
-  Beginner: "bg-green-100 text-green-800",
-  Junior: "bg-blue-100 text-blue-800",
-  "Mid-level": "bg-yellow-100 text-yellow-800",
-  Senior: "bg-red-100 text-red-800",
-}
-
-/**
- * Scan status badge configuration
+ * Configuration for scan status badges.
+ *
+ * @interface StatusBadgeConfig
+ * @property {string} label - Display label
+ * @property {string} variant - Badge variant style
  */
 export interface StatusBadgeConfig {
   label: string
   variant: "default" | "secondary" | "destructive" | "outline"
 }
 
+/**
+ * Badge configuration for each scan status.
+ * Determines the visual appearance of status indicators in the UI.
+ */
 export const SCAN_STATUS_CONFIG: Record<ScanStatus, StatusBadgeConfig> = {
   queued: { label: "Queued", variant: "secondary" },
   running: { label: "Running", variant: "default" },
