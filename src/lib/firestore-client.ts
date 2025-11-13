@@ -9,7 +9,7 @@
 
 import { doc, onSnapshot, collection, query, where, orderBy, Unsubscribe } from "firebase/firestore"
 import { db } from "./firebase-client"
-import type { Scan } from "./types"
+import type { Scan, UserQuota } from "./types"
 
 /**
  * Subscribe to real-time updates for a single scan document
@@ -103,6 +103,108 @@ export function subscribeUserScans(
     },
     (error) => {
       console.error("Error subscribing to user scans:", error)
+      onError?.(error as Error)
+    }
+  )
+}
+
+/**
+ * Rate limit configuration constants
+ * Must match the server-side RATE_LIMITS configuration
+ */
+export const RATE_LIMIT_CONFIG = {
+  anonymous: {
+    maxRequests: 3,
+    windowMs: 60 * 60 * 1000, // 1 hour
+  },
+  authenticated: {
+    maxRequests: 20,
+    windowMs: 60 * 60 * 1000, // 1 hour
+  },
+}
+
+/**
+ * Subscribe to real-time rate limit updates for a specific identifier
+ *
+ * This function subscribes to the rateLimits collection in Firestore
+ * and calculates the current quota status based on request history.
+ *
+ * @param identifier - The rate limit identifier (user ID or hashed IP)
+ * @param isAuthenticated - Whether this is an authenticated user
+ * @param onUpdate - Callback function called when quota data changes
+ * @param onError - Optional callback for error handling
+ * @returns Unsubscribe function to stop listening
+ *
+ * @example
+ * ```typescript
+ * // For authenticated user
+ * const unsubscribe = subscribeRateLimit('user123', true, (quota) => {
+ *   console.log('Remaining scans:', quota.remainingScans)
+ * })
+ *
+ * // For anonymous user (using hashed IP)
+ * const unsubscribe = subscribeRateLimit(hashedIp, false, (quota) => {
+ *   console.log('Remaining scans:', quota.remainingScans)
+ * })
+ * ```
+ */
+export function subscribeRateLimit(
+  identifier: string,
+  isAuthenticated: boolean,
+  onUpdate: (quota: UserQuota) => void,
+  onError?: (error: Error) => void
+): Unsubscribe {
+  const rateLimitRef = doc(db, "rateLimits", identifier)
+  const config = isAuthenticated ? RATE_LIMIT_CONFIG.authenticated : RATE_LIMIT_CONFIG.anonymous
+
+  return onSnapshot(
+    rateLimitRef,
+    (snapshot) => {
+      console.log(
+        `[subscribeRateLimit] Snapshot received for ${identifier}, exists: ${snapshot.exists()}`
+      )
+
+      const now = new Date()
+      const windowStart = new Date(now.getTime() - config.windowMs)
+      let usedScans = 0
+
+      if (snapshot.exists()) {
+        const data = snapshot.data()
+
+        if (data && data.requests && Array.isArray(data.requests)) {
+          // Filter requests within the current window
+          const validRequests = data.requests.filter((timestamp: unknown) => {
+            const requestTime =
+              timestamp && typeof timestamp === "object" && "toDate" in timestamp
+                ? (timestamp as { toDate: () => Date }).toDate()
+                : new Date(timestamp as string)
+            return requestTime > windowStart
+          })
+
+          usedScans = validRequests.length
+        }
+      } else {
+        console.log(
+          `[subscribeRateLimit] No rate limit document found for ${identifier}, showing fresh quota`
+        )
+      }
+
+      const remainingScans = Math.max(0, config.maxRequests - usedScans)
+      const resetAt = new Date(now.getTime() + config.windowMs)
+
+      const quota: UserQuota = {
+        maxScans: config.maxRequests,
+        usedScans,
+        remainingScans,
+        resetAt,
+        isAuthenticated,
+      }
+
+      console.log(`[subscribeRateLimit] Quota calculated:`, quota)
+      onUpdate(quota)
+    },
+    (error) => {
+      console.error("[subscribeRateLimit] Error subscribing to rate limit:", error)
       onError?.(error as Error)
     }
   )
