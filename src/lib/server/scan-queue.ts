@@ -218,9 +218,11 @@ async function processScan(scanId: string): Promise<void> {
       updatedAt: new Date(),
     })
 
+    // Use timeout from environment variable (GIT_CLONE_TIMEOUT_SECONDS)
+    const cloneTimeoutMs = parseInt(process.env.GIT_CLONE_TIMEOUT_SECONDS || "300", 10) * 1000
     const repoInfo = await cloneRepository(repoUrl, {
       depth: 1,
-      timeout: 120000, // 2 minutes
+      timeout: cloneTimeoutMs,
     })
 
     try {

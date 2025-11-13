@@ -20,19 +20,26 @@ import { NextRequest } from "next/server"
 
 /**
  * Gets rate limit configuration from environment variables with fallback defaults.
+ * Uses NEXT_PUBLIC_ prefix so the same config is available to both server and client.
  *
  * @private
  * @returns {Object} Rate limit configuration object
  */
 function getRateLimitConfig() {
-  const anonymousMaxRequests = parseInt(process.env.RATE_LIMIT_ANONYMOUS_MAX_REQUESTS || "3", 10)
-  const anonymousWindowHours = parseInt(process.env.RATE_LIMIT_ANONYMOUS_WINDOW_HOURS || "1", 10)
+  const anonymousMaxRequests = parseInt(
+    process.env.NEXT_PUBLIC_RATE_LIMIT_ANONYMOUS_MAX_REQUESTS || "3",
+    10
+  )
+  const anonymousWindowHours = parseInt(
+    process.env.NEXT_PUBLIC_RATE_LIMIT_ANONYMOUS_WINDOW_HOURS || "1",
+    10
+  )
   const authenticatedMaxRequests = parseInt(
-    process.env.RATE_LIMIT_AUTHENTICATED_MAX_REQUESTS || "20",
+    process.env.NEXT_PUBLIC_RATE_LIMIT_AUTHENTICATED_MAX_REQUESTS || "20",
     10
   )
   const authenticatedWindowHours = parseInt(
-    process.env.RATE_LIMIT_AUTHENTICATED_WINDOW_HOURS || "1",
+    process.env.NEXT_PUBLIC_RATE_LIMIT_AUTHENTICATED_WINDOW_HOURS || "1",
     10
   )
 
@@ -56,11 +63,12 @@ function getRateLimitConfig() {
 /**
  * Rate limit configuration for different user types.
  *
- * Configuration is loaded from environment variables with sensible defaults:
- * - RATE_LIMIT_ANONYMOUS_MAX_REQUESTS (default: 3)
- * - RATE_LIMIT_ANONYMOUS_WINDOW_HOURS (default: 1)
- * - RATE_LIMIT_AUTHENTICATED_MAX_REQUESTS (default: 20)
- * - RATE_LIMIT_AUTHENTICATED_WINDOW_HOURS (default: 1)
+ * Configuration is loaded from environment variables with sensible defaults.
+ * Uses NEXT_PUBLIC_ prefix so the same values are available to both server and client:
+ * - NEXT_PUBLIC_RATE_LIMIT_ANONYMOUS_MAX_REQUESTS (default: 3)
+ * - NEXT_PUBLIC_RATE_LIMIT_ANONYMOUS_WINDOW_HOURS (default: 1)
+ * - NEXT_PUBLIC_RATE_LIMIT_AUTHENTICATED_MAX_REQUESTS (default: 20)
+ * - NEXT_PUBLIC_RATE_LIMIT_AUTHENTICATED_WINDOW_HOURS (default: 1)
  *
  * @constant
  * @type {Object}

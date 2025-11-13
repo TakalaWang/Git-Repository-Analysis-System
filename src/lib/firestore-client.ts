@@ -109,19 +109,54 @@ export function subscribeUserScans(
 }
 
 /**
+ * Gets rate limit configuration from environment variables with fallback defaults.
+ * These values are embedded at build time from NEXT_PUBLIC_ environment variables.
+ *
+ * @private
+ * @returns {Object} Rate limit configuration object
+ */
+function getRateLimitConfig() {
+  // Parse from environment variables (NEXT_PUBLIC_ prefix for client-side access)
+  const anonymousMaxRequests = parseInt(
+    process.env.NEXT_PUBLIC_RATE_LIMIT_ANONYMOUS_MAX_REQUESTS || "3",
+    10
+  )
+  const anonymousWindowHours = parseInt(
+    process.env.NEXT_PUBLIC_RATE_LIMIT_ANONYMOUS_WINDOW_HOURS || "1",
+    10
+  )
+  const authenticatedMaxRequests = parseInt(
+    process.env.NEXT_PUBLIC_RATE_LIMIT_AUTHENTICATED_MAX_REQUESTS || "20",
+    10
+  )
+  const authenticatedWindowHours = parseInt(
+    process.env.NEXT_PUBLIC_RATE_LIMIT_AUTHENTICATED_WINDOW_HOURS || "1",
+    10
+  )
+
+  return {
+    anonymous: {
+      maxRequests: anonymousMaxRequests,
+      windowMs: anonymousWindowHours * 60 * 60 * 1000,
+    },
+    authenticated: {
+      maxRequests: authenticatedMaxRequests,
+      windowMs: authenticatedWindowHours * 60 * 60 * 1000,
+    },
+  }
+}
+
+/**
  * Rate limit configuration constants
  * Must match the server-side RATE_LIMITS configuration
+ *
+ * Configuration is loaded from NEXT_PUBLIC_ environment variables with defaults:
+ * - NEXT_PUBLIC_RATE_LIMIT_ANONYMOUS_MAX_REQUESTS (default: 3)
+ * - NEXT_PUBLIC_RATE_LIMIT_ANONYMOUS_WINDOW_HOURS (default: 1)
+ * - NEXT_PUBLIC_RATE_LIMIT_AUTHENTICATED_MAX_REQUESTS (default: 20)
+ * - NEXT_PUBLIC_RATE_LIMIT_AUTHENTICATED_WINDOW_HOURS (default: 1)
  */
-export const RATE_LIMIT_CONFIG = {
-  anonymous: {
-    maxRequests: 3,
-    windowMs: 60 * 60 * 1000, // 1 hour
-  },
-  authenticated: {
-    maxRequests: 20,
-    windowMs: 60 * 60 * 1000, // 1 hour
-  },
-}
+export const RATE_LIMIT_CONFIG = getRateLimitConfig()
 
 /**
  * Subscribe to real-time rate limit updates for a specific identifier
