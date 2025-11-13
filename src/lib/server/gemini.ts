@@ -4,9 +4,12 @@
  * Handles communication with Google's Gemini API for repository analysis.
  * Uses structured output (schema-based) for reliable response format.
  * Implements retry logic and error handling for robust AI integration.
+ *
+ *  @module gemini
  */
 
-import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai"
+import { GoogleGenAI } from "@google/genai"
+import { z } from "zod"
 import { getSystemPrompt, getAnalysisPrompt, RepositoryContext } from "./prompts"
 import { MaliciousContentError, GeminiRateLimitError, AppError } from "./errors"
 
@@ -14,7 +17,11 @@ import { MaliciousContentError, GeminiRateLimitError, AppError } from "./errors"
  * Gemini AI client instance.
  * @private
  */
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "")
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY ?? ""
+if (!GEMINI_API_KEY) {
+  throw new Error("GEMINI_API_KEY is required")
+}
+const genAI = new GoogleGenAI({ apiKey: GEMINI_API_KEY })
 
 /**
  * Gemini model name to use for analysis.
@@ -31,11 +38,12 @@ const MODEL_NAME = process.env.GEMINI_MODEL || "gemini-2.5-flash"
 const MAX_RETRIES = parseInt(process.env.GEMINI_MAX_RETRIES || "3", 10)
 
 /**
- * Delay in milliseconds between retry attempts for rate limit errors.
- * Configurable via GEMINI_RETRY_DELAY_SECONDS environment variable.
+ * Delay in milliseconds (base) used for exponential backoff on retry.
+ * For 429 we use this as the base; for 5xx/timeout we use a smaller base.
+ * Configurable via GEMINI_RETRY_DELAY_SECONDS.
  * @constant
  */
-const RETRY_DELAY_MS = parseInt(process.env.GEMINI_RETRY_DELAY_SECONDS || "60", 10) * 1000
+const RETRY_BASE_MS = parseInt(process.env.GEMINI_RETRY_DELAY_SECONDS || "60", 10) * 1000
 
 /**
  * Configuration for Gemini AI text generation.
@@ -52,256 +60,66 @@ const GENERATION_CONFIG = {
 /**
  * JSON Schema for structured output from Gemini AI.
  * Ensures the model returns data in the exact format we need.
+ *
+ * (Defined with Zod and converted to JSON Schema at runtime)
  */
-const ANALYSIS_SCHEMA = {
-  type: SchemaType.OBJECT as const,
-  properties: {
-    description: {
-      type: SchemaType.STRING as const,
-      description: "Natural language project description (2-3 sentences)",
-      nullable: false,
-    },
-    techStack: {
-      type: SchemaType.ARRAY as const,
-      description: "Array of technologies, frameworks, and tools used",
-      items: {
-        type: SchemaType.STRING as const,
-      },
-      nullable: false,
-    },
-    categorizedTechStack: {
-      type: SchemaType.OBJECT as const,
-      description: "Tech stack categorized by type",
-      properties: {
-        frontend: {
-          type: SchemaType.ARRAY as const,
-          items: { type: SchemaType.STRING as const },
-          nullable: true,
-        },
-        backend: {
-          type: SchemaType.ARRAY as const,
-          items: { type: SchemaType.STRING as const },
-          nullable: true,
-        },
-        database: {
-          type: SchemaType.ARRAY as const,
-          items: { type: SchemaType.STRING as const },
-          nullable: true,
-        },
-        devops: {
-          type: SchemaType.ARRAY as const,
-          items: { type: SchemaType.STRING as const },
-          nullable: true,
-        },
-        tools: {
-          type: SchemaType.ARRAY as const,
-          items: { type: SchemaType.STRING as const },
-          nullable: true,
-        },
-        other: {
-          type: SchemaType.ARRAY as const,
-          items: { type: SchemaType.STRING as const },
-          nullable: true,
-        },
-      },
-      nullable: true,
-    },
-    repositoryInfo: {
-      type: SchemaType.OBJECT as const,
-      description: "Enhanced repository information for HR understanding",
-      properties: {
-        name: {
-          type: SchemaType.STRING as const,
-          description: "Repository name",
-          nullable: false,
-        },
-        description: {
-          type: SchemaType.STRING as const,
-          description: "What the project does",
-          nullable: false,
-        },
-        teamSize: {
-          type: SchemaType.STRING as const,
-          description: "Estimated team size (e.g., '1-2 developers', '5-10 person team')",
-          nullable: true,
-        },
-        projectDuration: {
-          type: SchemaType.STRING as const,
-          description: "Estimated development time (e.g., '2-3 months', '6+ months')",
-          nullable: true,
-        },
-        complexity: {
-          type: SchemaType.STRING as const,
-          description: "Overall complexity (Low/Medium/High/Very High)",
-          nullable: false,
-        },
-        mainPurpose: {
-          type: SchemaType.STRING as const,
-          description: "Primary purpose of the project",
-          nullable: true,
-        },
-        targetAudience: {
-          type: SchemaType.STRING as const,
-          description: "Who uses this project",
-          nullable: true,
-        },
-      },
-      nullable: true,
-    },
-    detailedAssessment: {
-      type: SchemaType.OBJECT as const,
-      description: "Detailed skill and quality assessment",
-      properties: {
-        skillLevel: {
-          type: SchemaType.STRING as const,
-          format: "enum" as const,
-          enum: ["Beginner", "Junior", "Mid-level", "Senior"],
-          nullable: false,
-        },
-        reasoning: {
-          type: SchemaType.STRING as const,
-          description: "Detailed explanation of skill level assessment",
-          nullable: false,
-        },
-        strengths: {
-          type: SchemaType.ARRAY as const,
-          description: "Key strengths of the project",
-          items: { type: SchemaType.STRING as const },
-          nullable: false,
-        },
-        weaknesses: {
-          type: SchemaType.ARRAY as const,
-          description: "Areas needing improvement",
-          items: { type: SchemaType.STRING as const },
-          nullable: false,
-        },
-        recommendations: {
-          type: SchemaType.ARRAY as const,
-          description: "Specific recommendations for improvement",
-          items: { type: SchemaType.STRING as const },
-          nullable: false,
-        },
-        codeQuality: {
-          type: SchemaType.STRING as const,
-          description: "Code quality rating with explanation",
-          nullable: true,
-        },
-        architectureRating: {
-          type: SchemaType.STRING as const,
-          description: "Architecture quality rating with explanation",
-          nullable: true,
-        },
-        testCoverage: {
-          type: SchemaType.STRING as const,
-          description: "Testing coverage assessment",
-          nullable: true,
-        },
-      },
-      nullable: true,
-    },
-    skillLevel: {
-      type: SchemaType.STRING as const,
-      description: "Required expertise level",
-      format: "enum" as const,
-      enum: ["Beginner", "Junior", "Mid-level", "Senior"],
-      nullable: false,
-    },
-    skillLevelReasoning: {
-      type: SchemaType.STRING as const,
-      description: "Explanation for skill level assessment",
-      nullable: true,
-    },
-    projectComplexity: {
-      type: SchemaType.OBJECT as const,
-      description: "Detailed complexity breakdown",
-      properties: {
-        architecture: {
-          type: SchemaType.STRING as const,
-          description: "Architecture complexity rating",
-          nullable: false,
-        },
-        codeQuality: {
-          type: SchemaType.STRING as const,
-          description: "Code quality assessment",
-          nullable: false,
-        },
-        testCoverage: {
-          type: SchemaType.STRING as const,
-          description: "Testing coverage level",
-          nullable: false,
-        },
-        documentation: {
-          type: SchemaType.STRING as const,
-          description: "Documentation quality",
-          nullable: false,
-        },
-      },
-      nullable: true,
-    },
-    keyFeatures: {
-      type: SchemaType.ARRAY as const,
-      description: "Notable features of the project",
-      items: {
-        type: SchemaType.STRING as const,
-      },
-      nullable: true,
-    },
-    suggestedImprovements: {
-      type: SchemaType.ARRAY as const,
-      description: "Recommendations for improvement",
-      items: {
-        type: SchemaType.STRING as const,
-      },
-      nullable: true,
-    },
-  },
-  required: ["description", "techStack", "skillLevel"],
-}
+const DetailedAssessmentSchema = z.object({
+  skillLevel: z.enum(["Beginner", "Junior", "Mid-level", "Senior"]),
+  reasoning: z.string(),
+  strengths: z.array(z.string()),
+  weaknesses: z.array(z.string()),
+  recommendations: z.array(z.string()),
+  codeQuality: z.string().optional(),
+  architectureRating: z.string().optional(),
+  testCoverage: z.string().optional(),
+})
+
+const AnalysisResultSchema = z.object({
+  description: z.string().describe("Natural language project description (2-3 sentences)"),
+  techStack: z.array(z.string()).describe("Array of technologies, frameworks, and tools used"),
+  categorizedTechStack: z
+    .object({
+      frontend: z.array(z.string()).optional(),
+      backend: z.array(z.string()).optional(),
+      database: z.array(z.string()).optional(),
+      devops: z.array(z.string()).optional(),
+      tools: z.array(z.string()).optional(),
+      other: z.array(z.string()).optional(),
+    })
+    .optional(),
+  repositoryInfo: z
+    .object({
+      name: z.string().describe("Repository name"),
+      description: z.string().describe("What the project does"),
+      teamSize: z.enum(["Solo", "Small (2-5)", "Medium (6-20)", "Large (20+)"]).optional(),
+      projectDuration: z.string().optional(),
+      complexity: z.enum(["Low", "Medium", "High"]).optional(),
+      mainPurpose: z.string().optional(),
+      targetAudience: z.string().optional(),
+    })
+    .optional(),
+  detailedAssessment: DetailedAssessmentSchema.optional(),
+  skillLevel: z
+    .enum(["Beginner", "Junior", "Mid-level", "Senior"])
+    .describe("Required expertise level"),
+  skillLevelReasoning: z.string().optional(),
+  projectComplexity: z
+    .object({
+      architecture: z.string(),
+      codeQuality: z.string(),
+      testCoverage: z.string(),
+      documentation: z.string(),
+    })
+    .optional(),
+  keyFeatures: z.array(z.string()).optional(),
+  suggestedImprovements: z.array(z.string()).optional(),
+})
 
 /**
  * Structured analysis result from Gemini AI.
+ * (Exported with the same name to avoid breaking external imports)
  */
-export interface AnalysisResult {
-  description: string
-  techStack: string[]
-  categorizedTechStack?: {
-    frontend?: string[]
-    backend?: string[]
-    database?: string[]
-    devops?: string[]
-    tools?: string[]
-    other?: string[]
-  }
-  repositoryInfo?: {
-    name: string
-    description: string
-    teamSize?: string
-    projectDuration?: string
-    complexity: string
-    mainPurpose?: string
-    targetAudience?: string
-  }
-  detailedAssessment?: {
-    skillLevel: "Beginner" | "Junior" | "Mid-level" | "Senior"
-    reasoning: string
-    strengths: string[]
-    weaknesses: string[]
-    recommendations: string[]
-    codeQuality?: string
-    architectureRating?: string
-    testCoverage?: string
-  }
-  skillLevel: "Beginner" | "Junior" | "Mid-level" | "Senior"
-  skillLevelReasoning?: string
-  projectComplexity?: {
-    architecture: string
-    codeQuality: string
-    testCoverage: string
-    documentation: string
-  }
-  keyFeatures?: string[]
-  suggestedImprovements?: string[]
-}
+export type AnalysisResult = z.infer<typeof AnalysisResultSchema>
 
 /**
  * Detects potentially malicious prompts in repository content.
@@ -389,14 +207,14 @@ function detectMaliciousPrompt(context: RepositoryContext): boolean {
  *
  * This is the main entry point for AI-powered repository analysis. It:
  * 1. Checks for malicious prompt injection attempts
- * 2. Initializes a Gemini chat session with system context
+ * 2. Initializes a Gemini generation call with system context
  * 3. Sends repository analysis prompt with full context
- * 4. Parses and validates the JSON response
- * 5. Retries on transient failures (429, 500, 503 errors)
+ * 4. Parses and validates the JSON response (Zod)
+ * 5. Retries on transient failures (429, 500, 503, 408, 504)
  *
  * Retry behavior:
- * - 429 (rate limit): Waits RETRY_DELAY_MS (default 60s) before retry
- * - 500/503 (server error): Waits 2s before retry
+ * - 429 (rate limit): Exponential backoff with jitter using RETRY_BASE_MS
+ * - 500/503/408/504 (server/timeout): Backoff from a smaller base (2s)
  * - Other errors: No retry, throws immediately
  * - Max retries: Configurable via MAX_RETRIES env var (default 3)
  *
@@ -428,85 +246,64 @@ export async function analyzeRepositoryWithAI(
     )
   }
 
-  try {
-    // Use structured output with response schema
-    const model = genAI.getGenerativeModel({
-      model: MODEL_NAME,
-      generationConfig: {
-        ...GENERATION_CONFIG,
-        responseMimeType: "application/json",
-        responseSchema: ANALYSIS_SCHEMA,
-      },
-    })
+  // Build prompts
+  const systemInstruction = { parts: [{ text: getSystemPrompt() }] }
+  const analysisPrompt = getAnalysisPrompt(context)
 
-    // Build prompt with context (no need for JSON format instructions)
-    const systemPrompt = getSystemPrompt()
-    const analysisPrompt = getAnalysisPrompt(context)
+  let lastErr: unknown
 
-    // Create chat session for better context handling
-    const chat = model.startChat({
-      history: [
-        {
-          role: "user",
-          parts: [{ text: systemPrompt }],
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      // Use structured output with response schema
+      const response = await genAI.models.generateContent({
+        model: MODEL_NAME,
+        contents: [systemInstruction, { role: "user", parts: [{ text: analysisPrompt }] }],
+        config: {
+          ...GENERATION_CONFIG,
+          responseMimeType: "application/json",
+          responseJsonSchema: z.toJSONSchema(AnalysisResultSchema),
         },
-        {
-          role: "model",
-          parts: [
-            {
-              text: "I understand. I will analyze repositories and provide accurate technical assessments.",
-            },
-          ],
-        },
-      ],
-    })
-
-    // Send analysis request - response will automatically conform to schema
-    const result = await chat.sendMessage(analysisPrompt)
-    const response = result.response
-    const text = response.text()
-
-    // Parse JSON response (no need for markdown cleanup - guaranteed JSON)
-    const analysis: AnalysisResult = JSON.parse(text)
-
-    // Validate required fields (should always be present with schema)
-    if (!analysis.description || !analysis.techStack || !analysis.skillLevel) {
-      throw new Error("Invalid analysis result: missing required fields")
-    }
-
-    return analysis
-  } catch (error) {
-    console.error("Gemini analysis failed:", error)
-
-    // Retry logic for transient errors
-    if (retries > 0) {
-      const err = error as { status?: number; message?: string }
-
-      // Retry on API errors (429 rate limit, 500 server errors, timeouts)
-      if (err.status === 429 || err.status === 500 || err.status === 503) {
-        const delayMs = err.status === 429 ? RETRY_DELAY_MS : 2000
-        console.log(`Retrying analysis... (${retries} attempts left, waiting ${delayMs}ms)`)
-        await delay(delayMs)
-        return analyzeRepositoryWithAI(context, retries - 1)
+      })
+      // The SDK returns JSON text when responseMimeType is application/json
+      // Validate semantics with Zod to ensure correct field types/enums
+      const text = response.text
+      if (!text) {
+        throw new AppError("Empty response from Gemini API", "UNKNOWN_ERROR")
       }
+      const parsed = AnalysisResultSchema.parse(JSON.parse(text))
+      return parsed
+    } catch (error: unknown) {
+      lastErr = error
+
+      const err = error as { status?: number; response?: { status?: number }; message?: string }
+      const status: number | undefined =
+        err.status ??
+        err.response?.status ??
+        (typeof err.message === "string" && /\b(429|500|503|408|504)\b/.test(err.message)
+          ? parseInt(RegExp.$1, 10)
+          : undefined)
+
+      if (attempt < retries && isRetriableStatus(status)) {
+        const base = status === 429 || status === 503 ? RETRY_BASE_MS : 2000
+        const delayMs = jitteredDelay(base, attempt)
+        await delay(delayMs)
+        continue
+      }
+
+      const errorMessage = error instanceof Error ? error.message : "Unknown error"
+
+      // Gemini rate limit exceeded (after all retries)
+      if (status === 429 || status === 503) {
+        throw new GeminiRateLimitError(`Gemini API rate limit exceeded: ${errorMessage}`)
+      }
+
+      // Other Gemini errors - wrap in AppError with UNKNOWN_ERROR code
+      throw new AppError(`Gemini AI analysis failed: ${errorMessage}`, "UNKNOWN_ERROR")
     }
-
-    // Check for specific error types and throw appropriate errors
-    const err = error as { status?: number; message?: string }
-    const errorMessage = error instanceof Error ? error.message : "Unknown error"
-
-    // Gemini rate limit exceeded (after all retries)
-    if (
-      err.status === 429 ||
-      errorMessage.includes("429") ||
-      errorMessage.includes("RESOURCE_EXHAUSTED")
-    ) {
-      throw new GeminiRateLimitError(`Gemini API rate limit exceeded: ${errorMessage}`)
-    }
-
-    // Other Gemini errors - wrap in AppError with UNKNOWN_ERROR code
-    throw new AppError(`Gemini AI analysis failed: ${errorMessage}`, "UNKNOWN_ERROR")
   }
+
+  const msg = lastErr instanceof Error ? lastErr.message : String(lastErr)
+  throw new AppError(`Gemini AI analysis failed after retries: ${msg}`, "UNKNOWN_ERROR")
 }
 
 /**
@@ -519,4 +316,15 @@ export async function analyzeRepositoryWithAI(
  */
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/** Internal: full-jitter truncated exponential backoff helper. */
+function jitteredDelay(base: number, attempt: number): number {
+  const max = Math.min(60_000, base * 2 ** attempt)
+  return Math.floor(Math.random() * (max + 1))
+}
+
+/** Internal: which HTTP statuses should be retried. */
+function isRetriableStatus(status?: number): boolean {
+  return status === 429 || status === 500 || status === 503 || status === 408 || status === 504
 }

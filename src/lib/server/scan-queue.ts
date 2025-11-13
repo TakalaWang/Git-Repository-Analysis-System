@@ -28,7 +28,7 @@ import { analyzeRepository as analyzeRepositoryContent } from "./repository-anal
 import { analyzeRepositoryWithAI } from "./gemini"
 import { refundRateLimit } from "./rate-limiter"
 import { hashIp } from "./ip-utils"
-import { getErrorCode } from "./errors"
+import { getErrorCode, AppError } from "./errors"
 import type { ScanStatus, ErrorType } from "@/lib/types"
 
 /**
@@ -38,7 +38,7 @@ import type { ScanStatus, ErrorType } from "@/lib/types"
  * @property {string} id - Unique identifier (Firestore document ID)
  * @property {string} repoUrl - Git repository URL to scan
  * @property {string} [userId] - User ID if authenticated, undefined if anonymous
- * @property {string} ip - Client IP address (for tracking/rate limiting)
+ * @property {string} ip - Client IP address (for tracking/rate limiting), "unknown" in development
  * @property {ScanStatus} status - Current processing status
  * @property {Date} createdAt - When scan was requested
  * @property {Date} updatedAt - Last status update time
@@ -188,6 +188,57 @@ async function processScan(scanId: string): Promise<void> {
   const scanRef = adminDb.collection("scans").doc(scanId)
 
   try {
+    // Get scan document first to check rate limit
+    const scanDoc = await scanRef.get()
+    const scanData = scanDoc.data()
+
+    if (!scanData || !scanData.repoUrl) {
+      throw new AppError("Invalid scan data", "UNKNOWN_ERROR")
+    }
+
+    const { repoUrl, userId, ip } = scanData
+
+    // Check and consume rate limit quota
+    const identifier = userId || hashIp(ip || "unknown")
+    const { RATE_LIMITS } = await import("./rate-limiter")
+
+    const isAuthenticated = !!userId
+    const config = isAuthenticated ? RATE_LIMITS.authenticated : RATE_LIMITS.anonymous
+
+    // Check current rate limit status (without consuming quota)
+    const { getRateLimitStatus } = await import("./rate-limiter")
+    const rateLimitStatus = await getRateLimitStatus(identifier, isAuthenticated)
+
+    if (!rateLimitStatus.allowed) {
+      // Rate limit exceeded - fail immediately without consuming quota
+      // This error does NOT need refund because quota was never consumed
+      const errorMessage = `Rate limit exceeded. You have reached the limit of ${config.maxRequests} scans per ${config.windowLabel}. ${isAuthenticated ? "Please try again later." : "Sign in to get more scans (20 per hour)."}`
+      throw new AppError(errorMessage, "RATE_LIMIT_EXCEEDED")
+    }
+
+    // Consume quota: Record this request in rate limit
+    // From this point on, if any error occurs, we SHOULD refund (except for malicious content)
+    const rateLimitRef = adminDb.collection("rateLimits").doc(identifier)
+    const rateLimitDoc = await rateLimitRef.get()
+    const rateLimitData = rateLimitDoc.exists ? rateLimitDoc.data() : null
+    const now = Date.now()
+    const windowStart = now - config.windowMs
+    let requests: number[] = rateLimitData?.requests || []
+    requests = requests.filter((timestamp: number) => timestamp > windowStart)
+    requests.push(now) // 🔥 QUOTA CONSUMED HERE
+
+    await rateLimitRef.set(
+      {
+        identifier,
+        requests,
+        lastRequest: now,
+        userType: isAuthenticated ? "authenticated" : "anonymous",
+        ip: ip || "unknown",
+        updatedAt: new Date(),
+      },
+      { merge: true }
+    )
+
     // Update status to running
     await scanRef.update({
       status: "running",
@@ -199,16 +250,6 @@ async function processScan(scanId: string): Promise<void> {
         percentage: 10,
       },
     })
-
-    // Get scan document
-    const scanDoc = await scanRef.get()
-    const scanData = scanDoc.data()
-
-    if (!scanData || !scanData.repoUrl) {
-      throw new Error("Invalid scan data")
-    }
-
-    const { repoUrl } = scanData
 
     // Step 1: Clone repository
     console.log(`Cloning repository: ${repoUrl}`)
@@ -301,17 +342,28 @@ async function processScan(scanId: string): Promise<void> {
     switch (errorCode) {
       case "MALICIOUS_CONTENT":
         errorType = "malicious"
-        shouldRefund = false
+        shouldRefund = false // No refund: User intentionally submitted malicious content
         break
-      case "REPO_NOT_ACCESSIBLE":
       case "RATE_LIMIT_EXCEEDED":
         errorType = "client"
+        shouldRefund = false // No refund: Quota was never consumed (check failed before consumption)
+        break
+      case "REPO_NOT_ACCESSIBLE":
+        errorType = "client"
+        shouldRefund = true // Refund: Not user's fault if repo is private/deleted/invalid
         break
       case "REPO_TOO_LARGE":
+        errorType = "server"
+        shouldRefund = true // Refund: System limitation, not user's fault
+        break
       case "GEMINI_RATE_LIMIT":
+        errorType = "server"
+        shouldRefund = true // Refund: Gemini API overload, not user's fault
+        break
       case "UNKNOWN_ERROR":
       default:
         errorType = "server"
+        shouldRefund = true // Refund: Any unexpected server error
         break
     }
 
@@ -320,14 +372,14 @@ async function processScan(scanId: string): Promise<void> {
     const scanData = scanDoc.data()
 
     if (scanData && shouldRefund) {
-      // Refund quota for all errors except malicious content
+      // Refund quota: Remove the consumed request from rate limit
       const identifier = scanData.userId || hashIp(scanData.ip || "unknown")
-      console.log(
-        `Refunding quota for ${identifier} due to scan failure (${errorCode}): ${errorMessage}`
-      )
+      console.log(`Refunding quota for ${identifier} due to ${errorCode}: ${errorMessage}`)
       await refundRateLimit(identifier)
-    } else if (!shouldRefund) {
+    } else if (errorCode === "MALICIOUS_CONTENT") {
       console.log(`No refund - malicious content detected`)
+    } else if (errorCode === "RATE_LIMIT_EXCEEDED") {
+      console.log(`No refund - quota was never consumed (rate limit check failed)`)
     }
 
     // Update status to failed with error information

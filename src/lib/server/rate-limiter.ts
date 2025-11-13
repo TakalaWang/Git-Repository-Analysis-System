@@ -275,11 +275,6 @@ export async function refundRateLimit(identifier: string): Promise<boolean> {
     const rateLimitRef = adminDb.collection("rateLimits").doc(identifier)
     const doc = await rateLimitRef.get()
 
-    if (!doc.exists) {
-      console.log(`No rate limit data found for ${identifier}, nothing to refund`)
-      return false
-    }
-
     const data = doc.data()
     const requests: number[] = data?.requests || []
 

@@ -29,10 +29,9 @@
 
 import { NextRequest, NextResponse } from "next/server"
 import { adminAuth, adminDb } from "@/lib/server/firebase-admin"
-import { checkRateLimit, RATE_LIMITS } from "@/lib/server/rate-limiter"
 import { parseGitUrl } from "@/lib/server/git-handler"
 import { enqueueScan } from "@/lib/server/scan-queue"
-import { getClientIp, hashIp, isValidIp } from "@/lib/server/ip-utils"
+import { getClientIp, hashIp } from "@/lib/server/ip-utils"
 
 /**
  * POST handler for repository scan requests.
@@ -128,27 +127,15 @@ export async function POST(request: NextRequest) {
 
     // Prepare client IP information
     const clientIp = getClientIp(request)
-    const ipToStore = clientIp && isValidIp(clientIp) ? clientIp : "unknown"
+    // Store the IP as-is (can be a real IP or "unknown" in dev environment)
+    const ipToStore = clientIp
     const ipHash = userId ? null : hashIp(ipToStore)
 
-    // Check rate limit
-    const rateLimitResult = await checkRateLimit(request, userId)
-    const config = userId ? RATE_LIMITS.authenticated : RATE_LIMITS.anonymous
-    const rateLimitExceeded = !rateLimitResult.allowed
-
-    // Create scan document in Firestore (ALWAYS create, even if rate limit exceeded)
+    // Create scan document in Firestore (ALWAYS create and queue)
     const scanRef = adminDb.collection("scans").doc()
     const scanId = scanRef.id
 
-    // Determine initial scan status
-    const scanStatus: string = rateLimitExceeded ? "failed" : "queued"
-    const scanError: string | null = rateLimitExceeded
-      ? `Rate limit exceeded. You have reached the limit of ${config.maxRequests} scans per ${config.windowLabel}. ${userId ? "Please try again later." : "Sign in to get more scans (20 per hour)."}`
-      : null
-    const errorType = rateLimitExceeded ? "client" : null
-    const errorCode = rateLimitExceeded ? "RATE_LIMIT_EXCEEDED" : null
-
-    // Build scan data
+    // Build scan data - always start as "queued"
     const scanData: Record<string, unknown> = {
       id: scanId,
       repoUrl,
@@ -156,49 +143,25 @@ export async function POST(request: NextRequest) {
       userEmail: userEmail || null,
       ip: ipToStore,
       ipHash,
-      status: scanStatus,
+      status: "queued",
       provider: repoInfo.provider,
       owner: repoInfo.owner || null,
       repo: repoInfo.repo || null,
       commitHash: null, // Will be set by queue processor
       createdAt: new Date(),
       updatedAt: new Date(),
-      startedAt: rateLimitExceeded ? new Date() : null,
-      completedAt: rateLimitExceeded ? new Date() : null,
-      error: scanError,
-      errorType,
-      errorCode,
+      startedAt: null,
+      completedAt: null,
+      error: null,
+      errorType: null,
+      errorCode: null,
       description: null,
       techStack: null,
       skillLevel: null,
     }
 
     await scanRef.set(scanData)
-    console.log(`Scan ${scanId} created with status: ${scanStatus}`)
-
-    // If rate limit exceeded, return error response (but scan is recorded)
-    if (rateLimitExceeded) {
-      console.log(`Scan ${scanId} rejected due to rate limit for ${userId || clientIp}`)
-      return NextResponse.json(
-        {
-          success: false,
-          scanId,
-          status: "failed",
-          error: "Rate limit exceeded",
-          message: scanError,
-          resetAt: rateLimitResult.resetAt,
-          resultUrl: `/scan/${scanId}`,
-        },
-        {
-          status: 429,
-          headers: {
-            "X-RateLimit-Limit": config.maxRequests.toString(),
-            "X-RateLimit-Remaining": rateLimitResult.remaining.toString(),
-            "X-RateLimit-Reset": rateLimitResult.resetAt.toISOString(),
-          },
-        }
-      )
-    }
+    console.log(`Scan ${scanId} created with status: queued`)
 
     // Add to scan queue for async processing
     await enqueueScan(scanId)
@@ -214,14 +177,7 @@ export async function POST(request: NextRequest) {
         estimatedTime: "2-5 minutes",
         resultUrl: `/scan/${scanId}`,
       },
-      {
-        status: 202, // 202 Accepted
-        headers: {
-          "X-RateLimit-Limit": config.maxRequests.toString(),
-          "X-RateLimit-Remaining": rateLimitResult.remaining.toString(),
-          "X-RateLimit-Reset": rateLimitResult.resetAt.toISOString(),
-        },
-      }
+      { status: 202 } // 202 Accepted
     )
   } catch (error) {
     console.error("Scan API error:", error)

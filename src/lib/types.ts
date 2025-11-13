@@ -80,7 +80,7 @@ export interface UserFriendlyError {
  * @property {string | null} repoName - Repository display name
  * @property {string | null} userId - User ID if authenticated, null if anonymous
  * @property {string | null} userEmail - User email if authenticated
- * @property {string} ip - Client IP address (for rate limiting)
+ * @property {string} ip - Client IP address (for rate limiting), "unknown" in development
  * @property {string | null} ipHash - Hashed IP for anonymous users
  * @property {ScanStatus} status - Current scan status
  * @property {ScanProgress} [progress] - Real-time progress updates
