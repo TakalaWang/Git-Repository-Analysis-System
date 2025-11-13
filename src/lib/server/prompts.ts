@@ -220,6 +220,10 @@ Based on ALL the information above (especially the configuration files), please 
  * @private
  */
 function formatConfigFiles(configFiles: RepositoryContext["configFiles"]): string {
+  if (!configFiles || Object.keys(configFiles).length === 0) {
+    return "No configuration files found"
+  }
+
   const sections: string[] = []
 
   const categoryLabels: Record<string, string> = {
