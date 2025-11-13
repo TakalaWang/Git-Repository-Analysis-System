@@ -11,13 +11,13 @@ import { NextRequest } from "next/server"
  * Extracts the client IP address from a Next.js request.
  *
  * This function checks multiple headers in order of priority to handle
- * various proxy and CDN configurations (Cloudflare, Vercel, standard proxies).
+ * various proxy and CDN configurations (Cloudflare, standard proxies).
  *
  * Priority order:
  * 1. x-forwarded-for (most common proxy header)
  * 2. x-real-ip (alternative proxy header)
  * 3. cf-connecting-ip (Cloudflare specific)
- * 4. x-vercel-forwarded-for / x-forwarded-host (Vercel specific)
+ * 4. x-vercel-forwarded-for / x-forwarded-host (specific)
  *
  * @param {NextRequest} request - The Next.js request object containing headers
  * @returns {string} The client's IP address, or 'unknown' if not found

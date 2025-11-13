@@ -77,7 +77,6 @@ Next.js 15 with App Router provides a modern development experience while delive
    - Font optimization (`next/font`)
    - Static asset caching
 5. **Production Ready:**
-   - Used by Vercel, Nike, Twitch, Hulu, McDonald's
    - Battle-tested at massive scale
    - Active development and strong community
 
@@ -996,9 +995,9 @@ describe("Scan API", () => {
 
 ## Alternative Considerations
 
-### Why Not Serverless (Vercel/AWS Lambda)?
+### Why Not Serverless (AWS Lambda)?
 
-**Considered:** Deploying to Vercel or AWS Lambda
+**Considered:** Deploying to or AWS Lambda
 
 **Why VM Instead:**
 

@@ -404,7 +404,6 @@ For detailed architecture documentation, see [docs/ARCHITECTURE.md](./docs/ARCHI
 
 - Docker + Kubernetes (overkill for single VM)
 - systemd (less features, harder to debug)
-- Vercel (serverless, cold starts, cost)
 
 #### Nginx Reverse Proxy
 
