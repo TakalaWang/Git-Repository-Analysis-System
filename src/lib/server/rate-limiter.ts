@@ -236,6 +236,75 @@ export async function resetRateLimit(identifier: string): Promise<void> {
 }
 
 /**
+ * Refunds a rate limit request for a specific identifier.
+ *
+ * Removes the most recent request timestamp from the rate limit document,
+ * effectively giving back one quota slot. Should be called for all scan
+ * failures EXCEPT malicious prompt detection.
+ *
+ * Refund policy:
+ * ✅ REFUND for:
+ *   - Invalid Git URL
+ *   - Repository not accessible (private/not found)
+ *   - Git clone timeout
+ *   - Repository analysis failures
+ *   - Gemini API errors (500, 503, etc.)
+ *   - Firestore write errors
+ *   - Any unexpected system errors
+ *
+ * ❌ DO NOT REFUND for:
+ *   - Malicious prompt detected (intentional abuse)
+ *
+ * @param {string} identifier - The user ID or hashed IP to refund
+ * @returns {Promise<boolean>} True if refund successful, false if nothing to refund
+ *
+ * @example
+ * ```typescript
+ * // Refund quota after any non-malicious error
+ * try {
+ *   await analyzeRepository(context)
+ * } catch (error) {
+ *   if (!isMaliciousPromptError(error)) {
+ *     await refundRateLimit(userId || ipHash)
+ *   }
+ * }
+ * ```
+ */
+export async function refundRateLimit(identifier: string): Promise<boolean> {
+  try {
+    const rateLimitRef = adminDb.collection("rateLimits").doc(identifier)
+    const doc = await rateLimitRef.get()
+
+    if (!doc.exists) {
+      console.log(`No rate limit data found for ${identifier}, nothing to refund`)
+      return false
+    }
+
+    const data = doc.data()
+    const requests: number[] = data?.requests || []
+
+    if (requests.length === 0) {
+      console.log(`No requests to refund for ${identifier}`)
+      return false
+    }
+
+    // Remove the most recent request (last element) - create new array
+    const updatedRequests = requests.slice(0, -1)
+
+    await rateLimitRef.update({
+      requests: updatedRequests,
+      updatedAt: new Date(),
+    })
+
+    console.log(`Refunded 1 quota for ${identifier} (remaining requests: ${requests.length})`)
+    return true
+  } catch (error) {
+    console.error(`Failed to refund rate limit for ${identifier}:`, error)
+    return false
+  }
+}
+
+/**
  * Retrieves the current rate limit status without incrementing the counter.
  *
  * Similar to checkRateLimit but performs a read-only operation. Useful for

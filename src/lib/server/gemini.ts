@@ -8,6 +8,7 @@
 
 import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai"
 import { getSystemPrompt, getAnalysisPrompt, RepositoryContext } from "./prompts"
+import { MaliciousContentError, GeminiRateLimitError, AppError } from "./errors"
 
 /**
  * Gemini AI client instance.
@@ -422,7 +423,7 @@ export async function analyzeRepositoryWithAI(
 ): Promise<AnalysisResult> {
   // Check for malicious prompt injection before processing
   if (detectMaliciousPrompt(context)) {
-    throw new Error(
+    throw new MaliciousContentError(
       "Repository contains potentially malicious content that attempts to manipulate the analysis system"
     )
   }
@@ -479,7 +480,7 @@ export async function analyzeRepositoryWithAI(
 
     // Retry logic for transient errors
     if (retries > 0) {
-      const err = error as { status?: number }
+      const err = error as { status?: number; message?: string }
 
       // Retry on API errors (429 rate limit, 500 server errors, timeouts)
       if (err.status === 429 || err.status === 500 || err.status === 503) {
@@ -490,9 +491,21 @@ export async function analyzeRepositoryWithAI(
       }
     }
 
-    // No more retries or non-retryable error - throw and let scan-queue handle it
+    // Check for specific error types and throw appropriate errors
+    const err = error as { status?: number; message?: string }
     const errorMessage = error instanceof Error ? error.message : "Unknown error"
-    throw new Error(`Gemini AI analysis failed: ${errorMessage}`)
+
+    // Gemini rate limit exceeded (after all retries)
+    if (
+      err.status === 429 ||
+      errorMessage.includes("429") ||
+      errorMessage.includes("RESOURCE_EXHAUSTED")
+    ) {
+      throw new GeminiRateLimitError(`Gemini API rate limit exceeded: ${errorMessage}`)
+    }
+
+    // Other Gemini errors - wrap in AppError with UNKNOWN_ERROR code
+    throw new AppError(`Gemini AI analysis failed: ${errorMessage}`, "UNKNOWN_ERROR")
   }
 }
 
@@ -506,47 +519,4 @@ export async function analyzeRepositoryWithAI(
  */
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
-/**
- * Tests connectivity and authentication with Gemini API.
- *
- * Sends a simple test message to verify:
- * - API key is valid
- * - Network connection is working
- * - Gemini service is accessible
- *
- * Useful for health checks and startup validation.
- *
- * @returns {Promise<boolean>} True if connection successful, false otherwise
- *
- * @example
- * ```typescript
- * // Check API status on startup
- * if (await testGeminiConnection()) {
- *   console.log('✓ Gemini API connected')
- * } else {
- *   console.error('✗ Gemini API unavailable')
- * }
- *
- * // Health check endpoint
- * export async function GET() {
- *   const geminiOk = await testGeminiConnection()
- *   return NextResponse.json({
- *     status: geminiOk ? 'healthy' : 'degraded',
- *     gemini: geminiOk
- *   })
- * }
- * ```
- */
-export async function testGeminiConnection(): Promise<boolean> {
-  try {
-    const model = genAI.getGenerativeModel({ model: MODEL_NAME })
-    const result = await model.generateContent('Hello, respond with "OK" if you can read this.')
-    const response = result.response.text()
-    return response.toLowerCase().includes("ok")
-  } catch (error) {
-    console.error("Gemini connection test failed:", error)
-    return false
-  }
 }

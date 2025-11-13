@@ -24,9 +24,12 @@
 
 import { adminDb } from "./firebase-admin"
 import { cloneRepository, cleanupRepository } from "./git-handler"
-import { analyzeRepository as analyzeRepoContent } from "./repository-analyzer"
-import { analyzeRepository as analyzeWithGemini } from "./gemini"
-import type { ScanStatus } from "@/lib/types"
+import { analyzeRepository as analyzeRepositoryContent } from "./repository-analyzer"
+import { analyzeRepositoryWithAI } from "./gemini"
+import { refundRateLimit } from "./rate-limiter"
+import { hashIp } from "./ip-utils"
+import { getErrorCode } from "./errors"
+import type { ScanStatus, ErrorType } from "@/lib/types"
 
 /**
  * Represents a scan job in the queue.
@@ -191,9 +194,9 @@ async function processScan(scanId: string): Promise<void> {
       startedAt: new Date(),
       updatedAt: new Date(),
       progress: {
-        stage: "running",
-        message: "Initializing scan...",
-        percentage: 0,
+        stage: "cloning",
+        message: "Preparing to clone repository...",
+        percentage: 10,
       },
     })
 
@@ -237,7 +240,7 @@ async function processScan(scanId: string): Promise<void> {
         updatedAt: new Date(),
       })
 
-      const repoContext = await analyzeRepoContent(repoInfo.localPath, repoUrl)
+      const repoContext = await analyzeRepositoryContent(repoInfo.localPath, repoUrl)
 
       // Step 3: Get AI analysis from Gemini
       console.log(`Requesting Gemini analysis...`)
@@ -250,7 +253,7 @@ async function processScan(scanId: string): Promise<void> {
         updatedAt: new Date(),
       })
 
-      const analysis = await analyzeWithGemini(repoContext)
+      const analysis = await analyzeRepositoryWithAI(repoContext)
 
       // Step 4: Update scan document with results
       const repoName = repoInfo.repo || repoUrl.split("/").pop() || "Unknown Repository"
@@ -263,11 +266,6 @@ async function processScan(scanId: string): Promise<void> {
         description: analysis.description || null,
         techStack: analysis.techStack || null,
         skillLevel: analysis.skillLevel || null,
-        progress: {
-          stage: "completed",
-          message: "Analysis complete!",
-          percentage: 100,
-        },
       }
 
       // Only add optional fields if they exist
@@ -293,12 +291,53 @@ async function processScan(scanId: string): Promise<void> {
 
     const errorMessage = error instanceof Error ? error.message : "Unknown error occurred"
 
-    // Update status to failed
+    // Get error code from the error (uses AppError.errorCode if available)
+    const errorCode = getErrorCode(error)
+
+    // Determine error type and refund policy based on error code
+    let errorType: ErrorType = "server"
+    let shouldRefund = true
+
+    switch (errorCode) {
+      case "MALICIOUS_CONTENT":
+        errorType = "malicious"
+        shouldRefund = false
+        break
+      case "REPO_NOT_ACCESSIBLE":
+      case "RATE_LIMIT_EXCEEDED":
+        errorType = "client"
+        break
+      case "REPO_TOO_LARGE":
+      case "GEMINI_RATE_LIMIT":
+      case "UNKNOWN_ERROR":
+      default:
+        errorType = "server"
+        break
+    }
+
+    // Get scan data to determine rate limit identifier
+    const scanDoc = await scanRef.get()
+    const scanData = scanDoc.data()
+
+    if (scanData && shouldRefund) {
+      // Refund quota for all errors except malicious content
+      const identifier = scanData.userId || hashIp(scanData.ip || "unknown")
+      console.log(
+        `Refunding quota for ${identifier} due to scan failure (${errorCode}): ${errorMessage}`
+      )
+      await refundRateLimit(identifier)
+    } else if (!shouldRefund) {
+      console.log(`No refund - malicious content detected`)
+    }
+
+    // Update status to failed with error information
     await scanRef.update({
       status: "failed",
       completedAt: new Date(),
       updatedAt: new Date(),
       error: errorMessage,
+      errorCode,
+      errorType,
     })
   }
 }

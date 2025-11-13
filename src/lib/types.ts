@@ -20,16 +20,54 @@ export type ScanStatus = "queued" | "running" | "succeeded" | "failed"
 
 /**
  * Real-time progress information for a running scan.
+ * Only used during the 'running' status to show intermediate steps.
  *
  * @interface ScanProgress
- * @property {string} stage - Current processing stage
+ * @property {string} stage - Current processing stage (only during running)
  * @property {string} message - Human-readable status message
  * @property {number} percentage - Completion percentage (0-100)
  */
 export interface ScanProgress {
-  stage: "queued" | "cloning" | "analyzing" | "generating" | "completed"
+  stage: "cloning" | "analyzing" | "generating"
   message: string
   percentage: number
+}
+
+/**
+ * Specific error codes that can occur during scanning.
+ * Each code maps to a specific user-facing error message.
+ *
+ * @typedef ErrorCode
+ */
+export type ErrorCode =
+  | "RATE_LIMIT_EXCEEDED" // User has exceeded their scan quota
+  | "REPO_TOO_LARGE" // Repository is too large or took too long to clone
+  | "REPO_NOT_ACCESSIBLE" // Repository is private, deleted, or invalid URL
+  | "GEMINI_RATE_LIMIT" // Gemini API rate limit exceeded
+  | "MALICIOUS_CONTENT" // Repository contains potentially malicious content
+  | "UNKNOWN_ERROR" // Any other unhandled error
+
+/**
+ * Types of errors that can occur during scanning.
+ * Used to determine appropriate user messaging.
+ *
+ * @typedef {'client' | 'server' | 'malicious'} ErrorType
+ */
+export type ErrorType = "client" | "server" | "malicious"
+
+/**
+ * User-friendly error information for displaying to end users.
+ * Hides technical details and provides actionable guidance.
+ *
+ * @interface UserFriendlyError
+ * @property {string} title - Short error title
+ * @property {string} message - User-friendly explanation
+ * @property {string[]} actions - Suggested actions for the user
+ */
+export interface UserFriendlyError {
+  title: string
+  message: string
+  actions: string[]
 }
 
 /**
@@ -55,6 +93,7 @@ export interface ScanProgress {
  * @property {Date | string | null} startedAt - When processing started
  * @property {Date | string | null} completedAt - When processing finished
  * @property {string | null} error - Error message if scan failed
+ * @property {ErrorType | null} errorType - Type of error (client/server/malicious) for appropriate messaging
  * @property {string | null} description - AI-generated project description
  * @property {string[] | null} techStack - List of detected technologies
  * @property {CategorizedTechStack} [categorizedTechStack] - Technologies grouped by category
@@ -81,6 +120,8 @@ export interface Scan {
   startedAt: Date | string | null
   completedAt: Date | string | null
   error: string | null
+  errorType?: ErrorType | null
+  errorCode?: ErrorCode | null
   description: string | null
   techStack: string[] | null
   categorizedTechStack?: CategorizedTechStack

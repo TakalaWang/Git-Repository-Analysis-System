@@ -19,6 +19,7 @@ import fs from "fs/promises"
 import path from "path"
 import os from "os"
 import { randomUUID } from "crypto"
+import { RepositoryNotAccessibleError, RepositoryTooLargeError } from "./errors"
 
 const execAsync = promisify(exec)
 
@@ -185,7 +186,7 @@ export async function cloneRepository(
 
   // Validate URL
   if (!isValidGitUrl(url)) {
-    throw new Error("Invalid Git repository URL")
+    throw new RepositoryNotAccessibleError("Invalid Git repository URL")
   }
 
   // Parse URL
@@ -220,10 +221,12 @@ export async function cloneRepository(
     const err = error as { killed?: boolean; signal?: string; message?: string }
 
     if (err.killed && err.signal === "SIGTERM") {
-      throw new Error("Repository clone timeout - repository may be too large")
+      throw new RepositoryTooLargeError("Repository clone timeout - repository may be too large")
     }
 
-    throw new Error(`Failed to clone repository: ${err.message || "Unknown error"}`)
+    throw new RepositoryNotAccessibleError(
+      `Failed to clone repository: ${err.message || "Unknown error"}`
+    )
   }
 }
 
@@ -523,7 +526,7 @@ export async function cleanupOldRepositories(): Promise<void> {
 export async function getRemoteCommitHash(url: string): Promise<string> {
   // Validate URL
   if (!isValidGitUrl(url)) {
-    throw new Error("Invalid Git repository URL")
+    throw new RepositoryNotAccessibleError("Invalid Git repository URL")
   }
 
   const repoInfo = parseGitUrl(url)
@@ -544,16 +547,21 @@ export async function getRemoteCommitHash(url: string): Promise<string> {
     // Output format: "commit_hash\tHEAD"
     const match = stdout.match(/^([a-f0-9]{40})\s+HEAD$/m)
     if (!match) {
-      throw new Error("Failed to parse commit hash from git ls-remote output")
+      throw new RepositoryNotAccessibleError(
+        "Failed to parse commit hash from git ls-remote output"
+      )
     }
 
     return match[1]
   } catch (error) {
     // If ls-remote fails it may be because the repo is private or inaccessible.
     // Surface a clear error so the caller can reject private repositories.
-    if (error instanceof Error) {
-      throw new Error(`Failed to get commit hash: ${error.message}`)
+    if (error instanceof RepositoryNotAccessibleError) {
+      throw error
     }
-    throw new Error("Failed to get commit hash from repository")
+    if (error instanceof Error) {
+      throw new RepositoryNotAccessibleError(`Failed to get commit hash: ${error.message}`)
+    }
+    throw new RepositoryNotAccessibleError("Failed to get commit hash from repository")
   }
 }

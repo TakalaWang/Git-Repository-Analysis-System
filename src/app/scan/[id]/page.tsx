@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Separator } from "@/components/ui/separator"
 import { Progress } from "@/components/ui/progress"
@@ -24,10 +24,12 @@ import {
   XCircle,
   ShieldAlert,
   Ban,
+  InfoIcon,
 } from "lucide-react"
 import { subscribeScan } from "@/lib/firestore-client"
 import type { Scan } from "@/lib/types"
 import { useAuth } from "@/contexts/AuthContext"
+import { getUserFriendlyError } from "@/lib/error-messages"
 
 /**
  * Tailwind CSS classes for skill level badges.
@@ -157,7 +159,7 @@ export default function ScanResultPage() {
 
   /**
    * Get processing status badge (right badge)
-   * Shows whether the scan processing is complete or still running
+   * Shows the current scan status
    */
   const getProcessingStatusBadge = () => {
     if (!scan) return null
@@ -167,9 +169,9 @@ export default function ScanResultPage() {
       { label: string; variant: "default" | "secondary" | "destructive" | "outline" }
     > = {
       queued: { label: "Queued", variant: "secondary" },
-      running: { label: "Running", variant: "default" },
+      running: { label: "Analyzing...", variant: "default" },
       succeeded: { label: "Completed", variant: "outline" },
-      failed: { label: "Completed", variant: "outline" }, // Processing completed even if failed
+      failed: { label: "Failed", variant: "destructive" },
     }
 
     const config = statusConfig[scan.status]
@@ -350,16 +352,23 @@ export default function ScanResultPage() {
           {scan.error && (
             <CardContent>
               {(() => {
-                const errorInfo = getErrorInfo(scan.error)
+                const userFriendlyError = getUserFriendlyError(scan.errorCode)
                 return (
-                  <Alert variant={errorInfo.variant}>
-                    <div className="flex items-start gap-2">
-                      {errorInfo.icon}
-                      <div className="flex-1">
-                        <div className="font-semibold mb-1">{errorInfo.type}</div>
-                        <AlertDescription>{scan.error}</AlertDescription>
-                      </div>
-                    </div>
+                  <Alert
+                    variant={scan.errorCode === "MALICIOUS_CONTENT" ? "destructive" : "default"}
+                  >
+                    <InfoIcon className="h-4 w-4" />
+                    <AlertTitle>{userFriendlyError.title}</AlertTitle>
+                    <AlertDescription>
+                      <p className="mb-3">{userFriendlyError.message}</p>
+                      {userFriendlyError.actions.length > 0 && (
+                        <ul className="list-disc list-inside space-y-1 text-sm">
+                          {userFriendlyError.actions.map((action, index) => (
+                            <li key={index}>{action}</li>
+                          ))}
+                        </ul>
+                      )}
+                    </AlertDescription>
                   </Alert>
                 )
               })()}

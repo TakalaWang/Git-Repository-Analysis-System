@@ -30,12 +30,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { adminAuth, adminDb } from "@/lib/server/firebase-admin"
 import { checkRateLimit, RATE_LIMITS } from "@/lib/server/rate-limiter"
-import {
-  isValidGitUrl,
-  isRepositoryAccessible,
-  parseGitUrl,
-  getRemoteCommitHash,
-} from "@/lib/server/git-handler"
+import { parseGitUrl } from "@/lib/server/git-handler"
 import { enqueueScan } from "@/lib/server/scan-queue"
 import { getClientIp, hashIp, isValidIp } from "@/lib/server/ip-utils"
 
@@ -110,17 +105,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Repository URL is required" }, { status: 400 })
     }
 
-    // Validate Git URL format
-    if (!isValidGitUrl(repoUrl)) {
-      return NextResponse.json(
-        {
-          error: "Invalid repository URL. Please provide a valid GitHub, GitLab, or Bitbucket URL.",
-          example: "https://github.com/owner/repo",
-        },
-        { status: 400 }
-      )
-    }
-
     // Get user authentication status
     const authHeader = request.headers.get("authorization")
     let userId: string | undefined
@@ -139,87 +123,32 @@ export async function POST(request: NextRequest) {
     }
     console.log(`Received scan request for ${repoUrl} from ${userId || "anonymous user"}`)
 
-    // Parse repository info first
+    // Parse repository info
     const repoInfo = parseGitUrl(repoUrl)
 
-    // Check repository accessibility (quick check without cloning)
-    console.log(`Checking repository accessibility: ${repoUrl}`)
-    const isAccessible = await isRepositoryAccessible(repoUrl)
-
-    if (!isAccessible) {
-      return NextResponse.json(
-        {
-          error: "Repository not accessible",
-          message:
-            "Unable to access repository. Please ensure the repository is public and the URL is correct.",
-        },
-        { status: 400 }
-      )
-    }
-
-    // Get the latest commit hash for cache lookup
-    console.log(`Fetching latest commit hash for: ${repoUrl}`)
-    let commitHash: string
-    try {
-      commitHash = await getRemoteCommitHash(repoUrl)
-      console.log(`Latest commit hash: ${commitHash}`)
-    } catch (error) {
-      console.error("Failed to get commit hash:", error)
-      return NextResponse.json(
-        {
-          error: "Failed to retrieve repository information",
-          message: "Unable to fetch repository commit information. Please try again later.",
-        },
-        { status: 500 }
-      )
-    }
-
-    // Check rate limit (but still create scan record even if exceeded)
-    const rateLimitResult = await checkRateLimit(request, userId)
-    const config = userId ? RATE_LIMITS.authenticated : RATE_LIMITS.anonymous
-    const rateLimitExceeded = !rateLimitResult.allowed
-
-    // Check for cached scan with same commit hash (skip if rate limit exceeded)
-    let cachedScan: Record<string, unknown> | null = null
-
-    if (!rateLimitExceeded) {
-      console.log(`Checking for cached scan: ${repoUrl} @ ${commitHash}`)
-      const cachedScanSnapshot = await adminDb
-        .collection("scans")
-        .where("repoUrl", "==", repoUrl)
-        .where("commitHash", "==", commitHash)
-        .where("status", "==", "succeeded")
-        .limit(1)
-        .get()
-
-      if (!cachedScanSnapshot.empty) {
-        const doc = cachedScanSnapshot.docs[0]
-        cachedScan = doc.data()
-        console.log(`Found cached scan: ${doc.id}, copying analysis data`)
-      }
-    }
-
-    // Create scan document in Firestore (always create, even if rate limit exceeded)
-    const scanRef = adminDb.collection("scans").doc()
-    const scanId = scanRef.id
+    // Prepare client IP information
     const clientIp = getClientIp(request)
     const ipToStore = clientIp && isValidIp(clientIp) ? clientIp : "unknown"
     const ipHash = userId ? null : hashIp(ipToStore)
 
-    // Determine scan status and error
-    let scanStatus: string
-    let scanError: string | null = null
+    // Check rate limit
+    const rateLimitResult = await checkRateLimit(request, userId)
+    const config = userId ? RATE_LIMITS.authenticated : RATE_LIMITS.anonymous
+    const rateLimitExceeded = !rateLimitResult.allowed
 
-    if (rateLimitExceeded) {
-      scanStatus = "failed"
-      scanError = `Rate limit exceeded. You have reached the limit of ${config.maxRequests} scans per ${config.windowLabel}. ${userId ? "Please try again later." : "Sign in to get more scans (20 per hour)."}`
-    } else if (cachedScan) {
-      scanStatus = "succeeded"
-    } else {
-      scanStatus = "queued"
-    }
+    // Create scan document in Firestore (ALWAYS create, even if rate limit exceeded)
+    const scanRef = adminDb.collection("scans").doc()
+    const scanId = scanRef.id
 
-    // Build scan data, only including defined fields (Firestore doesn't accept undefined)
+    // Determine initial scan status
+    const scanStatus: string = rateLimitExceeded ? "failed" : "queued"
+    const scanError: string | null = rateLimitExceeded
+      ? `Rate limit exceeded. You have reached the limit of ${config.maxRequests} scans per ${config.windowLabel}. ${userId ? "Please try again later." : "Sign in to get more scans (20 per hour)."}`
+      : null
+    const errorType = rateLimitExceeded ? "client" : null
+    const errorCode = rateLimitExceeded ? "RATE_LIMIT_EXCEEDED" : null
+
+    // Build scan data
     const scanData: Record<string, unknown> = {
       id: scanId,
       repoUrl,
@@ -231,34 +160,23 @@ export async function POST(request: NextRequest) {
       provider: repoInfo.provider,
       owner: repoInfo.owner || null,
       repo: repoInfo.repo || null,
-      commitHash,
+      commitHash: null, // Will be set by queue processor
       createdAt: new Date(),
       updatedAt: new Date(),
-      startedAt: cachedScan || rateLimitExceeded ? new Date() : null,
-      completedAt: cachedScan || rateLimitExceeded ? new Date() : null,
+      startedAt: rateLimitExceeded ? new Date() : null,
+      completedAt: rateLimitExceeded ? new Date() : null,
       error: scanError,
-    }
-
-    // Copy analysis data from cached scan if available (only add fields that exist)
-    if (cachedScan) {
-      if (cachedScan.repoName) scanData.repoName = cachedScan.repoName
-      if (cachedScan.description) scanData.description = cachedScan.description
-      if (cachedScan.techStack) scanData.techStack = cachedScan.techStack
-      if (cachedScan.categorizedTechStack)
-        scanData.categorizedTechStack = cachedScan.categorizedTechStack
-      if (cachedScan.skillLevel) scanData.skillLevel = cachedScan.skillLevel
-      if (cachedScan.repositoryInfo) scanData.repositoryInfo = cachedScan.repositoryInfo
-      if (cachedScan.detailedAssessment) scanData.detailedAssessment = cachedScan.detailedAssessment
-    } else {
-      // For new scans, set analysis fields to null
-      scanData.description = null
-      scanData.techStack = null
-      scanData.skillLevel = null
+      errorType,
+      errorCode,
+      description: null,
+      techStack: null,
+      skillLevel: null,
     }
 
     await scanRef.set(scanData)
+    console.log(`Scan ${scanId} created with status: ${scanStatus}`)
 
-    // If rate limit exceeded, don't process the scan
+    // If rate limit exceeded, return error response (but scan is recorded)
     if (rateLimitExceeded) {
       console.log(`Scan ${scanId} rejected due to rate limit for ${userId || clientIp}`)
       return NextResponse.json(
@@ -282,29 +200,22 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // If no cache found, add to scan queue for async processing
-    if (!cachedScan) {
-      await enqueueScan(scanId)
-      console.log(`Scan ${scanId} queued for processing by ${userId || clientIp}`)
-    } else {
-      console.log(`Scan ${scanId} using cached scan data`)
-    }
+    // Add to scan queue for async processing
+    await enqueueScan(scanId)
+    console.log(`Scan ${scanId} queued for processing by ${userId || clientIp}`)
 
     // Return response with scan ID
     return NextResponse.json(
       {
         success: true,
         scanId,
-        status: cachedScan ? "succeeded" : "queued",
-        message: cachedScan
-          ? "Repository scan completed (using cached results)"
-          : "Repository scan has been queued for analysis",
-        estimatedTime: cachedScan ? "0 seconds" : "2-5 minutes",
-        cached: !!cachedScan,
+        status: "queued",
+        message: "Repository scan has been queued for analysis",
+        estimatedTime: "2-5 minutes",
         resultUrl: `/scan/${scanId}`,
       },
       {
-        status: cachedScan ? 200 : 202, // 200 OK for cached, 202 Accepted for new scan
+        status: 202, // 202 Accepted
         headers: {
           "X-RateLimit-Limit": config.maxRequests.toString(),
           "X-RateLimit-Remaining": rateLimitResult.remaining.toString(),
