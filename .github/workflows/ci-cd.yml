@@ -1,0 +1,338 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  NODE_VERSION: "20"
+  PNPM_VERSION: "9"
+
+jobs:
+  # ============================================================================
+  # Lint and Type Check
+  # ============================================================================
+  lint:
+    name: Lint & Type Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run ESLint
+        run: pnpm run lint
+
+      - name: Run TypeScript type check
+        run: pnpm run type-check
+
+  # ============================================================================
+  # Run Tests
+  # ============================================================================
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    needs: lint
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run tests
+        run: pnpm run test
+        env:
+          # Test environment variables (for API tests that need Firebase)
+          NEXT_PUBLIC_FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
+          NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: ${{ secrets.FIREBASE_AUTH_DOMAIN }}
+          NEXT_PUBLIC_FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          FIREBASE_SERVICE_ACCOUNT_PATH: ./service-account-file.example.json
+
+      - name: Generate coverage report
+        run: pnpm run test:coverage
+        if: success()
+
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v3
+        if: always()
+        with:
+          files: ./coverage/lcov.info
+          flags: unittests
+          name: codecov-umbrella
+          fail_ci_if_error: false
+
+  # ============================================================================
+  # Build Application
+  # ============================================================================
+  build:
+    name: Build Application
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build application
+        run: pnpm run build
+        env:
+          # Build-time environment variables
+          NEXT_PUBLIC_FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
+          NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: ${{ secrets.FIREBASE_AUTH_DOMAIN }}
+          NEXT_PUBLIC_FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET: ${{ secrets.FIREBASE_STORAGE_BUCKET }}
+          NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.FIREBASE_MESSAGING_SENDER_ID }}
+          NEXT_PUBLIC_FIREBASE_APP_ID: ${{ secrets.FIREBASE_APP_ID }}
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: build-artifacts
+          path: |
+            .next
+            public
+            package.json
+            pnpm-lock.yaml
+          retention-days: 7
+
+  # ============================================================================
+  # Deploy to VM (Production)
+  # Required GitHub Secrets:
+  # - SSH_PRIVATE_KEY: SSH private key for VM access
+  # - VM_HOST: VM hostname or IP address
+  # - VM_USER: SSH user (e.g., ubuntu, root)
+  # - VM_PORT: SSH port (default: 22)
+  # - DEPLOY_PATH: Application path on VM (e.g., /var/www/git-analyzer)
+  # ============================================================================
+  deploy:
+    name: Deploy to VM
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.VM_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy to VM
+        env:
+          VM_HOST: ${{ secrets.VM_HOST }}
+          VM_USER: ${{ secrets.VM_USER }}
+          VM_PORT: ${{ secrets.VM_PORT }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+        run: |
+          ssh -i ~/.ssh/deploy_key -p $VM_PORT $VM_USER@$VM_HOST << 'EOF'
+            set -e
+            
+            echo "========================================"
+            echo "Starting deployment..."
+            echo "========================================"
+            
+            # Navigate to deployment directory
+            cd $DEPLOY_PATH
+            
+            # Backup current version
+            if [ -d ".next" ]; then
+              echo "📦 Creating backup..."
+              timestamp=$(date +%Y%m%d_%H%M%S)
+              mkdir -p backups
+              tar -czf backups/backup_${timestamp}.tar.gz .next package.json pnpm-lock.yaml || true
+              # Keep only last 5 backups
+              ls -t backups/backup_*.tar.gz | tail -n +6 | xargs rm -f || true
+              echo "✅ Backup created: backup_${timestamp}.tar.gz"
+            fi
+            
+            # Stash any local changes
+            echo "🔄 Stashing local changes..."
+            git stash || true
+            
+            # Pull latest code
+            echo "📥 Pulling latest code..."
+            git fetch origin
+            git reset --hard origin/main
+            
+            # Check if pnpm is installed
+            if ! command -v pnpm &> /dev/null; then
+              echo "⚠️  pnpm not found, installing..."
+              npm install -g pnpm
+            fi
+            
+            # Install dependencies
+            echo "📦 Installing dependencies..."
+            pnpm install --frozen-lockfile
+            
+            # Build application
+            echo "🔨 Building application..."
+            pnpm run build
+            
+            # Check if PM2 is installed
+            if ! command -v pm2 &> /dev/null; then
+              echo "⚠️  PM2 not found, installing..."
+              npm install -g pm2
+            fi
+            
+            # Restart PM2 service with zero downtime
+            echo "🔄 Reloading application (zero downtime)..."
+            if pm2 list | grep -q "git-analyzer"; then
+              pm2 reload ecosystem.config.js --update-env
+            else
+              pm2 start ecosystem.config.js
+            fi
+            
+            # Save PM2 configuration
+            pm2 save
+            
+            # Check PM2 status
+            echo ""
+            echo "========================================"
+            echo "PM2 Status:"
+            pm2 status
+            echo "========================================"
+            
+            echo ""
+            echo "✅ Deployment completed successfully!"
+          EOF
+
+      - name: Wait for application to stabilize
+        run: sleep 15
+
+      - name: Health check
+        run: |
+          echo "🏥 Performing health check..."
+          max_attempts=5
+          attempt=0
+
+          while [ $attempt -lt $max_attempts ]; do
+            response=$(curl -s -o /dev/null -w "%{http_code}" http://${{ secrets.VM_HOST }}:3000/api/health || echo "000")
+            
+            if [ "$response" = "200" ]; then
+              echo "✅ Health check passed (attempt $((attempt+1))/$max_attempts)"
+              exit 0
+            fi
+            
+            echo "⚠️  Health check failed with status: $response (attempt $((attempt+1))/$max_attempts)"
+            attempt=$((attempt+1))
+            
+            if [ $attempt -lt $max_attempts ]; then
+              echo "Waiting 5 seconds before retry..."
+              sleep 5
+            fi
+          done
+
+          echo "❌ Health check failed after $max_attempts attempts"
+          exit 1
+
+      - name: Rollback on failure
+        if: failure()
+        env:
+          VM_HOST: ${{ secrets.VM_HOST }}
+          VM_USER: ${{ secrets.VM_USER }}
+          VM_PORT: ${{ secrets.VM_PORT }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+        run: |
+          echo "🔄 Rolling back to previous version..."
+          ssh -i ~/.ssh/deploy_key -p $VM_PORT $VM_USER@$VM_HOST << 'EOF'
+            cd $DEPLOY_PATH
+            
+            # Find latest backup
+            latest_backup=$(ls -t backups/backup_*.tar.gz 2>/dev/null | head -1)
+            
+            if [ -n "$latest_backup" ]; then
+              echo "📦 Restoring from: $latest_backup"
+              tar -xzf "$latest_backup"
+              pm2 reload ecosystem.config.js
+              echo "✅ Rollback completed"
+            else
+              echo "⚠️  No backup found for rollback"
+            fi
+          EOF
+
+      - name: Notify deployment status
+        if: always()
+        run: |
+          if [ "${{ job.status }}" = "success" ]; then
+            echo "✅ Deployment successful!"
+            echo "🚀 Application is now live at: http://${{ secrets.VM_HOST }}"
+          else
+            echo "❌ Deployment failed!"
+            echo "Please check the logs above for details."
+          fi
+
+  # ============================================================================
+  # Security Scan
+  # ============================================================================
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: "fs"
+          scan-ref: "."
+          format: "sarif"
+          output: "trivy-results.sarif"
+
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: "trivy-results.sarif"
+
+      - name: Run npm audit
+        run: npx audit-ci --moderate
+        continue-on-error: true
