@@ -11,7 +11,6 @@ It includes:
 - Firebase client and server setup
 - Gemini API configuration
 - Application rate limits and Git operation parameters
-- PM2 runtime configuration
 
 ---
 
@@ -57,10 +56,7 @@ Used by backend services for secure access to Firestore and authentication.
 
 ```bash
 # Path to the Firebase service account JSON file
-FIREBASE_SERVICE_ACCOUNT_PATH=./service-account-file.json
-
-# OR (less secure, for testing only)
-FIREBASE_SERVICE_ACCOUNT_KEY='{"type":"service_account",...}'
+FIREBASE_SERVICE_ACCOUNT_JSON_PATH=./service-account-file.json
 ```
 
 **Generate a service account key:**

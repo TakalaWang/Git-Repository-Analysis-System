@@ -889,7 +889,7 @@ export async function analyzeTimeline(repoPath: string, repoUrl: string): Promis
         if (commits.length >= 3 && timeline.length < 3) {
           console.log("[Timeline] Creating fallback timeline from commits")
           const fallbackEvents: TimelineEvent[] = []
-          
+
           // Add initial commit
           if (commits.length > 0) {
             const firstCommit = commits[commits.length - 1]
@@ -901,7 +901,7 @@ export async function analyzeTimeline(repoPath: string, repoUrl: string): Promis
               commits: [firstCommit.hash.slice(0, 7)],
             })
           }
-          
+
           // Add middle commit
           if (commits.length > 1) {
             const middleCommit = commits[Math.floor(commits.length / 2)]
@@ -913,7 +913,7 @@ export async function analyzeTimeline(repoPath: string, repoUrl: string): Promis
               commits: [middleCommit.hash.slice(0, 7)],
             })
           }
-          
+
           // Add latest commit
           if (commits.length > 2) {
             const latestCommit = commits[0]
@@ -925,10 +925,12 @@ export async function analyzeTimeline(repoPath: string, repoUrl: string): Promis
               commits: [latestCommit.hash.slice(0, 7)],
             })
           }
-          
+
           // Merge fallback with existing timeline
           timeline = [...fallbackEvents, ...timeline]
-          console.log(`[Timeline] Added ${fallbackEvents.length} fallback events, total: ${timeline.length}`)
+          console.log(
+            `[Timeline] Added ${fallbackEvents.length} fallback events, total: ${timeline.length}`
+          )
         }
       }
 

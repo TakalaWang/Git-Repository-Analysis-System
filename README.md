@@ -41,9 +41,10 @@ A full-stack web application that analyzes Git repositories using AI to provide 
 - 🤖 **AI-Powered Analysis**: Uses Google Gemini to analyze repository structure, architecture, and code quality
 - 🔍 **Repository Insights**: Automatic detection of languages, frameworks, dependencies, and project structure
 - 📊 **Real-time Progress**: Live scan status updates via Firestore listeners
-- 🛡️ **Security**: Malicious content detection, rate limiting, and authenticated scanning
+- � **Project Timeline**: AI-driven analysis of Git history to identify major milestones and changes with interactive ECharts visualization
+- �🛡️ **Security**: Malicious content detection, rate limiting, and authenticated scanning
 - 👥 **User Authentication**: Firebase Auth with Google sign-in
-- 📈 **Quota Management**: Per-user and per-IP rate limiting with automatic quota refunds on errors
+- � **Quota Management**: Per-user and per-IP rate limiting with automatic quota refunds on errors
 - ⚡ **Async Processing**: Background job queue for handling analysis tasks
 - 🎨 **Modern UI**: Beautiful shadcn/ui components with Tailwind CSS
 
