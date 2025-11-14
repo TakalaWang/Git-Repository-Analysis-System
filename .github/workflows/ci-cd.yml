@@ -1,4 +1,4 @@
-name: Build & Deploy (DockerHub + SSH + Firebase SA file)
+name: Build & Deploy
 
 on:
   push:
@@ -14,14 +14,14 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node & PNPM
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 20
           cache: "pnpm"
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v4.2.0
         with:
           version: 9
 
@@ -31,7 +31,6 @@ jobs:
       - name: Build app (Next.js standalone)
         run: pnpm build
 
-      # 只把執行期需要的檔案打進 image，保持輕量
       - name: Prepare minimal docker context
         run: |
           mkdir -p docker_ctx/.next
@@ -57,7 +56,6 @@ jobs:
           docker push ${IMAGE}:latest
           docker push ${IMAGE}:${GIT_SHA}
 
-      # 由 Secrets 動態產生 .env（不進 repo），並指定 SA 檔路徑
       - name: Generate .env from secrets
         run: |
           mkdir -p env_out
@@ -69,20 +67,14 @@ jobs:
             echo "NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=${{ secrets.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID }}"
             echo "NEXT_PUBLIC_FIREBASE_APP_ID=${{ secrets.NEXT_PUBLIC_FIREBASE_APP_ID }}"
             echo "GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}"
-            # 指向容器內掛載的位置（與 docker run 的 -v 對齊）
-            echo "GOOGLE_APPLICATION_CREDENTIALS=./service-account-file.json"
-            # 容器內部預設埠；對外埠用 DEPLOY_PORT 控制
+            echo "FIREBASE_SERVICE_ACCOUNT_JSON_PATH=./service-account-file.json"
             echo "PORT=3000"
           } > env_out/.env
-
-      # 從 Secrets 寫出 Firebase Service Account 實體檔
       - name: Write Firebase service account file
         run: |
-          echo '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}' > env_out/service-account-file.json
-
-      # 上傳 .env 與 SA 檔到 VM 的 shared 目錄
+          echo '${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}' > env_out/service-account-file.json
       - name: Upload env and service account to VM
-        uses: appleboy/scp-action@v0.1.4
+        uses: appleboy/scp-action@v1
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
@@ -90,15 +82,12 @@ jobs:
           source: "env_out/.env,env_out/service-account-file.json"
           target: "${{ secrets.VM_APP_DIR || '/opt/git-repo-analysis' }}/shared"
           overwrite: true
-
-      # SSH 進 VM：安裝 docker（若無）、pull 最新映像、以 volume 掛載 SA 檔啟動
       - name: Deploy on VM (install docker if needed, pull & run)
-        uses: appleboy/ssh-action@v1.0.3
+        uses: appleboy/ssh-action@v1.2.3
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
-          script_stop: true
           script: |
             set -e
 
@@ -118,7 +107,7 @@ jobs:
             fi
 
             # 如 Docker Hub 私有倉庫，可在 VM 登入（選用）
-            # echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+            echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
 
             # 拉最新映像
             docker pull "$IMAGE"
