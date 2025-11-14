@@ -71,6 +71,24 @@ export interface UserFriendlyError {
 }
 
 /**
+ * Timeline event representing a major change or milestone in the repository history.
+ *
+ * @interface TimelineEvent
+ * @property {string} date - Event date in ISO format (YYYY-MM-DD)
+ * @property {string} title - Brief title of the event
+ * @property {string} description - Detailed description of what changed
+ * @property {string} type - Type of change (feature/refactor/architecture/release)
+ * @property {string[]} commits - Related commit hashes
+ */
+export interface TimelineEvent {
+  date: string
+  title: string
+  description: string
+  type: "feature" | "refactor" | "architecture" | "release" | "milestone"
+  commits: string[]
+}
+
+/**
  * Complete scan document as stored in Firestore.
  * Represents a single repository analysis request and its results.
  *
@@ -100,6 +118,7 @@ export interface UserFriendlyError {
  * @property {string | null} skillLevel - Required developer skill level
  * @property {RepositoryInfo} [repositoryInfo] - Enhanced repository metadata
  * @property {DetailedAssessment} [detailedAssessment] - Comprehensive code assessment
+ * @property {TimelineEvent[]} [timeline] - Major milestones and changes in project history
  */
 export interface Scan {
   id: string
@@ -128,6 +147,7 @@ export interface Scan {
   skillLevel: string | null
   repositoryInfo?: RepositoryInfo
   detailedAssessment?: DetailedAssessment
+  timeline?: TimelineEvent[]
 }
 
 // ============================================================================

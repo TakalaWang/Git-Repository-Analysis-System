@@ -21,10 +21,10 @@ import path from "path"
  * Only runs once even if module is imported multiple times (singleton pattern).
  */
 if (!admin.apps.length) {
-  const servicePath = process.env.GOOGLE_APPLICATION_CREDENTIALS
+  const servicePath = process.env.FIREBASE_SERVICE_ACCOUNT_JSON_PATH
   if (!servicePath) {
     throw new Error(
-      "Missing GOOGLE_APPLICATION_CREDENTIALS environment variable. " +
+      "Missing FIREBASE_SERVICE_ACCOUNT_JSON_PATH environment variable. " +
         "Set it to the path of your Firebase service account JSON file."
     )
   }
@@ -37,7 +37,7 @@ if (!admin.apps.length) {
   if (!fs.existsSync(resolvedPath)) {
     throw new Error(
       `Firebase service account file not found at: ${resolvedPath}\n` +
-        `Please ensure the file exists and GOOGLE_APPLICATION_CREDENTIALS is set correctly.`
+        `Please ensure the file exists and FIREBASE_SERVICE_ACCOUNT_JSON_PATH is set correctly.`
     )
   }
 

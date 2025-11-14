@@ -565,3 +565,73 @@ export async function getRemoteCommitHash(url: string): Promise<string> {
     throw new RepositoryNotAccessibleError("Failed to get commit hash from repository")
   }
 }
+
+/**
+ * Git commit log entry.
+ *
+ * @interface GitCommit
+ * @property {string} hash - Commit SHA hash
+ * @property {string} date - Commit date in ISO format
+ * @property {string} author - Commit author name
+ * @property {string} email - Commit author email
+ * @property {string} message - Commit message
+ */
+export interface GitCommit {
+  hash: string
+  date: string
+  author: string
+  email: string
+  message: string
+}
+
+/**
+ * Retrieves the git commit history from a cloned repository.
+ *
+ * Extracts the full commit log including hash, date, author, and message.
+ * Useful for analyzing project evolution and identifying major milestones.
+ *
+ * @param {string} localPath - Path to the cloned repository
+ * @param {number} limit - Maximum number of commits to retrieve (default: 200)
+ * @returns {Promise<GitCommit[]>} Array of commit information
+ * @throws {Error} If git log command fails
+ *
+ * @example
+ * ```typescript
+ * const commits = await getGitLog('/tmp/repo-abc123', 100)
+ * console.log(`Retrieved ${commits.length} commits`)
+ * commits.forEach(commit => {
+ *   console.log(`${commit.date}: ${commit.message}`)
+ * })
+ * ```
+ */
+export async function getGitLog(localPath: string, limit: number = 500): Promise<GitCommit[]> {
+  try {
+    const format = "%H|%aI|%an|%ae|%s"
+    const { stdout } = await execAsync(`git log --all --format="${format}" -n ${limit}`, {
+      cwd: localPath,
+      maxBuffer: 10 * 1024 * 1024, // 10MB buffer for large repos
+    })
+
+    const commits: GitCommit[] = []
+    const lines = stdout.trim().split("\n")
+
+    for (const line of lines) {
+      if (!line) continue
+      const [hash, date, author, email, message] = line.split("|")
+      if (hash && date && author && email && message) {
+        commits.push({
+          hash,
+          date,
+          author,
+          email,
+          message,
+        })
+      }
+    }
+
+    return commits
+  } catch (error) {
+    console.error("Failed to get git log:", error)
+    throw new Error("Failed to retrieve git commit history")
+  }
+}

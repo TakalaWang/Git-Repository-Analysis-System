@@ -19,7 +19,12 @@
 
 import fs from "fs/promises"
 import path from "path"
-import { RepositoryContext } from "./prompts"
+import { RepositoryContext, getTimelinePrompt } from "./prompts"
+import { getGitLog } from "./git-handler"
+import { GoogleGenAI } from "@google/genai"
+import type { TimelineEvent } from "../types"
+
+const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" })
 
 /**
  * Mapping of file extensions to programming language names.
@@ -791,6 +796,154 @@ function categorizeConfigFiles(
  * // Config Files: 15 found (package managers, build tools, etc.)
  * ```
  */
+/**
+ * Analyzes Git commit history to identify major milestones and changes.
+ *
+ * Uses Gemini AI to analyze commit messages and dates to extract significant
+ * events in the project's development history. Identifies 15-30 events
+ * including all important changes such as features, refactors, releases, etc.
+ *
+ * @param {string} repoPath - Local path to the cloned repository
+ * @param {string} repoUrl - Repository URL for context
+ * @returns {Promise<TimelineEvent[]>} Array of timeline events sorted by date
+ *
+ * @example
+ * ```typescript
+ * const timeline = await analyzeTimeline(repoPath, repoUrl)
+ * console.log(`Found ${timeline.length} major events`)
+ * ```
+ */
+export async function analyzeTimeline(repoPath: string, repoUrl: string): Promise<TimelineEvent[]> {
+  try {
+    console.log(`[Timeline] Analyzing commit history for ${repoUrl}`)
+
+    // Get git commit history (last 500 commits)
+    const commits = await getGitLog(repoPath, 500)
+
+    if (commits.length === 0) {
+      console.log("[Timeline] No commits found, skipping timeline analysis")
+      return []
+    }
+
+    console.log(`[Timeline] Analyzing ${commits.length} commits with Gemini`)
+
+    // Generate prompt and analyze with Gemini
+    const prompt = getTimelinePrompt(
+      commits.map((c) => ({
+        date: c.date,
+        message: c.message,
+        hash: c.hash,
+      })),
+      repoUrl
+    )
+
+    // Generate timeline with Gemini
+    const model = genAI.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: [{ parts: [{ text: prompt }] }],
+    })
+    const result = await model
+    const text = result.text
+
+    if (!text) {
+      console.error("[Timeline] Empty response from Gemini")
+      return []
+    }
+
+    // Parse response
+    let timeline: TimelineEvent[]
+    try {
+      // Remove markdown code blocks if present
+      let cleanedResult = text.trim()
+      if (cleanedResult.startsWith("```json")) {
+        cleanedResult = cleanedResult.replace(/```json\n?/g, "").replace(/```\n?$/g, "")
+      } else if (cleanedResult.startsWith("```")) {
+        cleanedResult = cleanedResult.replace(/```\n?/g, "")
+      }
+
+      const parsed = JSON.parse(cleanedResult)
+      timeline = parsed.timeline || []
+
+      // Validate timeline structure
+      if (!Array.isArray(timeline)) {
+        throw new Error("Invalid timeline format: expected array")
+      }
+
+      // Validate and filter events with required fields
+      timeline = timeline.filter((event) => {
+        return (
+          event.date &&
+          event.title &&
+          event.description &&
+          event.type &&
+          Array.isArray(event.commits)
+        )
+      })
+
+      console.log(`[Timeline] Successfully extracted ${timeline.length} events`)
+
+      // Ensure we have at least 3 timeline events
+      if (timeline.length < 3) {
+        console.warn(`[Timeline] Only ${timeline.length} events found, expected at least 3`)
+        // If we have commits but few events, try to create basic events from commits
+        if (commits.length >= 3 && timeline.length < 3) {
+          console.log("[Timeline] Creating fallback timeline from commits")
+          const fallbackEvents: TimelineEvent[] = []
+          
+          // Add initial commit
+          if (commits.length > 0) {
+            const firstCommit = commits[commits.length - 1]
+            fallbackEvents.push({
+              date: firstCommit.date.split("T")[0],
+              title: "Initial Commit",
+              description: firstCommit.message,
+              type: "milestone",
+              commits: [firstCommit.hash.slice(0, 7)],
+            })
+          }
+          
+          // Add middle commit
+          if (commits.length > 1) {
+            const middleCommit = commits[Math.floor(commits.length / 2)]
+            fallbackEvents.push({
+              date: middleCommit.date.split("T")[0],
+              title: "Project Development",
+              description: middleCommit.message,
+              type: "feature",
+              commits: [middleCommit.hash.slice(0, 7)],
+            })
+          }
+          
+          // Add latest commit
+          if (commits.length > 2) {
+            const latestCommit = commits[0]
+            fallbackEvents.push({
+              date: latestCommit.date.split("T")[0],
+              title: "Latest Update",
+              description: latestCommit.message,
+              type: "feature",
+              commits: [latestCommit.hash.slice(0, 7)],
+            })
+          }
+          
+          // Merge fallback with existing timeline
+          timeline = [...fallbackEvents, ...timeline]
+          console.log(`[Timeline] Added ${fallbackEvents.length} fallback events, total: ${timeline.length}`)
+        }
+      }
+
+      return timeline
+    } catch (parseError) {
+      console.error("[Timeline] Failed to parse Gemini response:", parseError)
+      console.error("[Timeline] Raw response:", text)
+      return []
+    }
+  } catch (error) {
+    console.error("[Timeline] Error analyzing timeline:", error)
+    return [] // Return empty array on error, don't fail the entire scan
+  }
+}
+
 export function generateSummary(context: RepositoryContext): string {
   const topLanguages = Object.entries(context.languages)
     .sort(([, a], [, b]) => b - a)

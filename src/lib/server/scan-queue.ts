@@ -24,7 +24,10 @@
 
 import { adminDb } from "./firebase-admin"
 import { cloneRepository, cleanupRepository } from "./git-handler"
-import { analyzeRepository as analyzeRepositoryContent } from "./repository-analyzer"
+import {
+  analyzeRepository as analyzeRepositoryContent,
+  analyzeTimeline,
+} from "./repository-analyzer"
 import { analyzeRepositoryWithAI } from "./gemini"
 import { refundRateLimit } from "./rate-limiter"
 import { hashIp } from "./ip-utils"
@@ -296,7 +299,20 @@ async function processScan(scanId: string): Promise<void> {
 
       const analysis = await analyzeRepositoryWithAI(repoContext)
 
-      // Step 4: Update scan document with results
+      // Step 4: Analyze Git timeline
+      console.log(`Analyzing project timeline...`)
+      await scanRef.update({
+        progress: {
+          stage: "generating",
+          message: "Analyzing project timeline...",
+          percentage: 85,
+        },
+        updatedAt: new Date(),
+      })
+
+      const timeline = await analyzeTimeline(repoInfo.localPath, repoUrl)
+
+      // Step 5: Update scan document with results
       const repoName = repoInfo.repo || repoUrl.split("/").pop() || "Unknown Repository"
 
       const updateData: Record<string, unknown> = {
@@ -318,6 +334,9 @@ async function processScan(scanId: string): Promise<void> {
       }
       if (analysis.detailedAssessment) {
         updateData.detailedAssessment = analysis.detailedAssessment
+      }
+      if (timeline && timeline.length > 0) {
+        updateData.timeline = timeline
       }
 
       await scanRef.update(updateData)

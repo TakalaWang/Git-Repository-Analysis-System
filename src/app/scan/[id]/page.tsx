@@ -30,6 +30,7 @@ import { subscribeScan } from "@/lib/firestore-client"
 import type { Scan } from "@/lib/types"
 import { useAuth } from "@/contexts/AuthContext"
 import { getUserFriendlyError } from "@/lib/error-messages"
+import { TimelineChart } from "@/components/TimelineChart"
 
 /**
  * Tailwind CSS classes for skill level badges.
@@ -339,6 +340,8 @@ export default function ScanResultPage() {
                   </p>
                 </Section>
               )}
+
+              <TimelineChart timeline={scan.timeline} />
             </TabsContent>
 
             {/* Tech Stack */}

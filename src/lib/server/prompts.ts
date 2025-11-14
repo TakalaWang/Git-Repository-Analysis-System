@@ -256,3 +256,83 @@ function formatConfigFiles(configFiles: RepositoryContext["configFiles"]): strin
 
   return sections.length > 0 ? sections.join("\n") : "No configuration files found"
 }
+
+/**
+ * Generates a prompt for analyzing git commit history to identify major milestones.
+ *
+ * This prompt instructs Gemini to analyze commit messages and dates to identify
+ * significant events in the project's history such as:
+ * - Major feature releases
+ * - Architectural changes
+ * - Technology migrations
+ * - Project milestones
+ *
+ * @param {Array<{date: string, message: string, hash: string}>} commits - Array of commit information
+ * @param {string} repoUrl - Repository URL for context
+ * @returns {string} Timeline analysis prompt
+ *
+ * @example
+ * ```typescript
+ * const commits = await getGitLog(localPath)
+ * const prompt = getTimelinePrompt(commits, repoUrl)
+ * const result = await chat.sendMessage(prompt)
+ * ```
+ */
+export function getTimelinePrompt(
+  commits: Array<{ date: string; message: string; hash: string }>,
+  repoUrl: string
+): string {
+  const commitsSummary = commits
+    .map((c) => `${c.date.split("T")[0]} [${c.hash.slice(0, 7)}]: ${c.message}`)
+    .join("\n")
+
+  return `Analyze the following git commit history and identify ALL significant milestones and changes in this project's development.
+
+Repository: ${repoUrl}
+
+Commit History (${commits.length} commits):
+${commitsSummary}
+
+IMPORTANT: You MUST identify at least 3 events, ideally 15-30 events or milestones that represent significant changes in the project. Record ALL important changes including:
+- Initial project setup
+- Major feature releases
+- Minor feature additions
+- Architectural refactoring
+- Technology stack changes
+- Breaking changes or version releases
+- Migration to new frameworks or libraries
+- Performance improvements
+- Bug fixes and security updates
+- Documentation updates
+- Configuration changes
+- Dependency updates
+
+For each milestone, provide:
+1. **date**: The approximate date (YYYY-MM-DD format) when this change occurred
+2. **title**: A brief, clear title (5-10 words) describing the milestone
+3. **description**: A detailed explanation (2-3 sentences) of what changed and why it's significant
+4. **type**: One of: "feature", "refactor", "architecture", "release", "milestone"
+5. **commits**: Array of related commit hashes (short form, 7 characters)
+
+Return ONLY a valid JSON object with a "timeline" array containing the events sorted by date (oldest first). Do not include any markdown formatting or code blocks.
+
+Example response:
+{
+  "timeline": [
+    {
+      "date": "2023-01-15",
+      "title": "Initial Project Setup",
+      "description": "Project initialization with Next.js 13 and TypeScript. Set up basic folder structure and configuration files.",
+      "type": "milestone",
+      "commits": ["a1b2c3d", "e4f5g6h"]
+    },
+    {
+      "date": "2023-03-20",
+      "title": "Add User Authentication",
+      "description": "Implemented user authentication system using Firebase Auth. Added login, registration, and password reset functionality.",
+      "type": "feature",
+      "commits": ["i7j8k9l", "m0n1o2p"]
+    }
+  ]
+}`
+}
