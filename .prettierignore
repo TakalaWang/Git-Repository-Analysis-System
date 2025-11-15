@@ -7,3 +7,4 @@ coverage
 .env*.local
 .env
 package-lock.json
+src/components/ui/*
