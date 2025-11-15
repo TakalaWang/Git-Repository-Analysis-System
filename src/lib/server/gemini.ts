@@ -17,15 +17,15 @@ import { MaliciousContentError, GeminiRateLimitError, AppError } from "./errors"
  * Gemini AI client instance.
  * @private
  */
-const GEMINI_API_KEY_PATH = process.env.GEMINI_API_KEY_PATH ?? ""
-if (!GEMINI_API_KEY_PATH) {
-  throw new Error("GEMINI_API_KEY_PATH is required")
+const GENAI_API_KEY_PATH = process.env.GENAI_API_KEY_PATH ?? ""
+if (!GENAI_API_KEY_PATH) {
+  throw new Error("GENAI_API_KEY_PATH is required")
 }
 const genAI = new GoogleGenAI({
   vertexai: true,
   project: "gitroll-dev",
   location: "global",
-  googleAuthOptions: { keyFile: GEMINI_API_KEY_PATH },
+  googleAuthOptions: { keyFile: GENAI_API_KEY_PATH },
 })
 
 /**
