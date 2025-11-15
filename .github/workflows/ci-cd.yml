@@ -1,4 +1,4 @@
-name: Build & Deploy
+name: CD (Continuous Deployment)
 
 on:
   push:
@@ -15,23 +15,31 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
-      - uses: pnpm/action-setup@v4.2.0
+
+      - name: Setup PNPM
+        uses: pnpm/action-setup@v4.2.0
         with:
           version: 9
-      - name: Setup Node & PNPM
+
+      - name: Setup Node & PNPM cache
         uses: actions/setup-node@v6
         with:
           node-version: 20
           cache: "pnpm"
-      - uses: pnpm/action-setup@v4.2.0
-        with:
-          version: 9
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-
+      - name: Prepare Firebase service account for build (temp file)
+        run: |
+          echo '${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}' > service-account-file.json
       - name: Build app (Next.js standalone)
+        env:
+          FIREBASE_SERVICE_ACCOUNT_JSON_PATH: ${{ github.workspace }}/service-account-file.json
+          NEXT_TELEMETRY_DISABLED: "1"
         run: pnpm build
+      - name: Cleanup temp secrets
+        if: always()
+        run: rm -f service-account-file.json
 
       - name: Prepare minimal docker context
         run: |
@@ -57,7 +65,6 @@ jobs:
           docker build -t ${IMAGE}:latest -t ${IMAGE}:${GIT_SHA} docker_ctx
           docker push ${IMAGE}:latest
           docker push ${IMAGE}:${GIT_SHA}
-
       - name: Generate .env from secrets
         run: |
           mkdir -p env_out
@@ -72,9 +79,11 @@ jobs:
             echo "FIREBASE_SERVICE_ACCOUNT_JSON_PATH=./service-account-file.json"
             echo "PORT=3000"
           } > env_out/.env
+
       - name: Write Firebase service account file
         run: |
           echo '${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}' > env_out/service-account-file.json
+
       - name: Upload env and service account to VM
         uses: appleboy/scp-action@v1
         with:
@@ -84,6 +93,7 @@ jobs:
           source: "env_out/.env,env_out/service-account-file.json"
           target: "${{ secrets.VM_APP_DIR || '/opt/git-repo-analysis' }}/shared"
           overwrite: true
+
       - name: Deploy on VM (install docker if needed, pull & run)
         uses: appleboy/ssh-action@v1.2.3
         with:
@@ -92,29 +102,22 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           script: |
             set -e
-
             APP_DIR="${{ secrets.VM_APP_DIR || '/opt/git-repo-analysis' }}"
             IMAGE="${{ secrets.DOCKERHUB_USERNAME }}/git-repo-analysis:latest"
             CONTAINER="git-repo-analysis"
             EXTERNAL_PORT="${{ secrets.DEPLOY_PORT || '3000' }}"
 
-            # 準備目錄
             sudo mkdir -p "$APP_DIR/shared"
             sudo chown -R $USER:$USER "$APP_DIR"
 
-            # 安裝 docker（若缺）
             if ! command -v docker >/dev/null 2>&1; then
               curl -fsSL https://get.docker.com | sh
               sudo usermod -aG docker $USER || true
             fi
 
-            # 如 Docker Hub 私有倉庫，可在 VM 登入（選用）
             echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
-
-            # 拉最新映像
             docker pull "$IMAGE"
 
-            # 停舊起新
             if [ "$(docker ps -q -f name=${CONTAINER})" ]; then
               docker stop ${CONTAINER} || true
               docker rm ${CONTAINER} || true
@@ -122,7 +125,6 @@ jobs:
               docker rm ${CONTAINER} || true
             fi
 
-            # 啟動容器：讀 VM 上的 .env，並掛載 SA JSON 檔到 /app
             docker run -d \
               --name ${CONTAINER} \
               --restart unless-stopped \
@@ -131,5 +133,4 @@ jobs:
               -p ${EXTERNAL_PORT}:3000 \
               "$IMAGE"
 
-            # 清理 dangling images
             docker image prune -f || true
