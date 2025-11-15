@@ -40,8 +40,8 @@ yarn-error.log*
 # firebase service account file
 service-account-file.json
 
-# llm api keys
-llm-api-key.json
+# genai api keys
+genai-api-key.json
 
 # typescript
 *.tsbuildinfo
