@@ -17,11 +17,16 @@ import { MaliciousContentError, GeminiRateLimitError, AppError } from "./errors"
  * Gemini AI client instance.
  * @private
  */
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY ?? ""
-if (!GEMINI_API_KEY) {
-  throw new Error("GEMINI_API_KEY is required")
+const GEMINI_API_KEY_PATH = process.env.GEMINI_API_KEY_PATH ?? ""
+if (!GEMINI_API_KEY_PATH) {
+  throw new Error("GEMINI_API_KEY_PATH is required")
 }
-const genAI = new GoogleGenAI({ apiKey: GEMINI_API_KEY })
+const genAI = new GoogleGenAI({
+  vertexai: true,
+  project: "gitroll-dev",
+  location: "global",
+  googleAuthOptions: { keyFile: GEMINI_API_KEY_PATH },
+})
 
 /**
  * Gemini model name to use for analysis.
@@ -120,6 +125,33 @@ const AnalysisResultSchema = z.object({
  * (Exported with the same name to avoid breaking external imports)
  */
 export type AnalysisResult = z.infer<typeof AnalysisResultSchema>
+
+/**
+ * JSON Schema for timeline event from Gemini AI.
+ * Represents a single major milestone or change in the repository history.
+ */
+const TimelineEventSchema = z.object({
+  date: z.string().describe("Event date in ISO format (YYYY-MM-DD) according to commit history"),
+  title: z.string().describe("Brief title of the event"),
+  description: z.string().describe("Detailed description of what changed"),
+  type: z
+    .enum(["feature", "refactor", "architecture", "release", "milestone"])
+    .describe("Type of change"),
+  commits: z.array(z.string()).describe("Related commit hashes"),
+})
+
+/**
+ * JSON Schema for timeline response from Gemini AI.
+ * Contains an array of timeline events.
+ */
+const TimelineResponseSchema = z.object({
+  timeline: z.array(TimelineEventSchema).describe("Array of timeline events").min(3).max(10),
+})
+
+/**
+ * Structured timeline response from Gemini AI.
+ */
+export type TimelineResponse = z.infer<typeof TimelineResponseSchema>
 
 /**
  * Detects potentially malicious prompts in repository content.
@@ -327,4 +359,92 @@ function jitteredDelay(base: number, attempt: number): number {
 /** Internal: which HTTP statuses should be retried. */
 function isRetriableStatus(status?: number): boolean {
   return status === 429 || status === 500 || status === 503 || status === 408 || status === 504
+}
+
+/**
+ * Analyzes Git commit history to identify major milestones and changes using Gemini AI.
+ *
+ * Uses structured output with Zod schema to ensure reliable response format.
+ * Identifies 15-30 events including all important changes such as features,
+ * refactors, releases, etc.
+ *
+ * @param {Array<{date: string, message: string, hash: string}>} commits - Array of commit information
+ * @param {string} repoUrl - Repository URL for context
+ * @param {number} [retries] - Number of retry attempts remaining (defaults to MAX_RETRIES)
+ * @returns {Promise<TimelineResponse>} Structured timeline with events
+ *
+ * @throws {Error} If timeline analysis fails after all retries
+ *
+ * @example
+ * ```typescript
+ * const commits = await getGitLog(repoPath, 500)
+ * const result = await analyzeTimelineWithAI(commits, repoUrl)
+ * console.log(`Found ${result.timeline.length} events`)
+ * ```
+ */
+export async function analyzeTimelineWithAI(
+  commits: Array<{ date: string; message: string; hash: string }>,
+  repoUrl: string,
+  retries: number = MAX_RETRIES
+): Promise<TimelineResponse> {
+  // Import here to avoid circular dependency
+  const { getTimelinePrompt } = await import("./prompts")
+
+  const prompt = getTimelinePrompt(commits, repoUrl)
+
+  let lastErr: unknown
+
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      // Use structured output with response schema
+      const response = await genAI.models.generateContent({
+        model: MODEL_NAME,
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        config: {
+          ...GENERATION_CONFIG,
+          responseMimeType: "application/json",
+          responseJsonSchema: z.toJSONSchema(TimelineResponseSchema),
+        },
+      })
+
+      const text = response.text
+      if (!text) {
+        throw new AppError("Empty response from Gemini API", "UNKNOWN_ERROR")
+      }
+
+      // Parse and validate with Zod
+      const parsed = TimelineResponseSchema.parse(JSON.parse(text))
+      return parsed
+    } catch (error: unknown) {
+      lastErr = error
+
+      const err = error as { status?: number; response?: { status?: number }; message?: string }
+      const status: number | undefined =
+        err.status ??
+        err.response?.status ??
+        (typeof err.message === "string" && /\b(429|500|503|408|504)\b/.test(err.message)
+          ? parseInt(RegExp.$1, 10)
+          : undefined)
+
+      if (attempt < retries && isRetriableStatus(status)) {
+        const base = status === 429 || status === 503 ? RETRY_BASE_MS : 2000
+        const delayMs = jitteredDelay(base, attempt)
+        await delay(delayMs)
+        continue
+      }
+
+      const errorMessage = error instanceof Error ? error.message : "Unknown error"
+
+      // Gemini rate limit exceeded (after all retries)
+      if (status === 429 || status === 503) {
+        throw new GeminiRateLimitError(`Gemini API rate limit exceeded: ${errorMessage}`)
+      }
+
+      // Other Gemini errors - wrap in AppError with UNKNOWN_ERROR code
+      throw new AppError(`Gemini timeline analysis failed: ${errorMessage}`, "UNKNOWN_ERROR")
+    }
+  }
+
+  const msg = lastErr instanceof Error ? lastErr.message : String(lastErr)
+  throw new AppError(`Gemini timeline analysis failed after retries: ${msg}`, "UNKNOWN_ERROR")
 }

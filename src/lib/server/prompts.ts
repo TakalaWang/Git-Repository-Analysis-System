@@ -312,27 +312,5 @@ For each milestone, provide:
 2. **title**: A brief, clear title (5-10 words) describing the milestone
 3. **description**: A detailed explanation (2-3 sentences) of what changed and why it's significant
 4. **type**: One of: "feature", "refactor", "architecture", "release", "milestone"
-5. **commits**: Array of related commit hashes (short form, 7 characters)
-
-Return ONLY a valid JSON object with a "timeline" array containing the events sorted by date (oldest first). Do not include any markdown formatting or code blocks.
-
-Example response:
-{
-  "timeline": [
-    {
-      "date": "2023-01-15",
-      "title": "Initial Project Setup",
-      "description": "Project initialization with Next.js 13 and TypeScript. Set up basic folder structure and configuration files.",
-      "type": "milestone",
-      "commits": ["a1b2c3d", "e4f5g6h"]
-    },
-    {
-      "date": "2023-03-20",
-      "title": "Add User Authentication",
-      "description": "Implemented user authentication system using Firebase Auth. Added login, registration, and password reset functionality.",
-      "type": "feature",
-      "commits": ["i7j8k9l", "m0n1o2p"]
-    }
-  ]
-}`
+5. **commits**: Array of related commit hashes (short form, 7 characters)`
 }

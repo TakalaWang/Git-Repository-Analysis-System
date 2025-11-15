@@ -48,9 +48,9 @@ export function TimelineChart({ timeline = [] }: TimelineChartProps) {
 
     const chart = echarts.init(chartRef.current)
 
-    // Prepare data for ECharts - assign Y value based on index for vertical distribution
-    const seriesData = timeline.map((event, index) => ({
-      value: [event.date, index % 3], // Distribute events across 3 levels
+    // Prepare data for ECharts - one-dimensional timeline (all on same Y level)
+    const seriesData = timeline.map((event) => ({
+      value: [event.date, 0], // All events on Y=0 for 1D timeline
       itemStyle: {
         color: EVENT_TYPE_COLORS[event.type],
       },
@@ -61,15 +61,6 @@ export function TimelineChart({ timeline = [] }: TimelineChartProps) {
     }))
 
     const option: echarts.EChartsOption = {
-      title: {
-        text: "Project Timeline",
-        left: "center",
-        top: 10,
-        textStyle: {
-          fontSize: 18,
-          fontWeight: "bold",
-        },
-      },
       tooltip: {
         trigger: "item",
         formatter: (params: unknown) => {
@@ -90,61 +81,58 @@ export function TimelineChart({ timeline = [] }: TimelineChartProps) {
               <strong style="color: ${EVENT_TYPE_COLORS[eventType]};">${data.name}</strong><br/>
               <span style="color: #666;">Type: ${EVENT_TYPE_LABELS[eventType]}</span><br/>
               <span style="color: #666;">Date: ${data.value[0]}</span><br/>
-              <span style="color: #888; font-size: 12px;">${data.commits.length} commits</span>
+              <span style="color: #999; font-size: 11px;">${data.commits.length} commit${data.commits.length > 1 ? "s" : ""}</span>
             </div>
           `
         },
       },
       grid: {
-        left: "5%",
-        right: "5%",
-        bottom: "10%",
-        top: "15%",
-        containLabel: true,
+        left: "60px",
+        right: "60px",
+        bottom: "60px",
+        top: "40px",
+        containLabel: false,
       },
       xAxis: {
         type: "time",
+        axisLine: {
+          lineStyle: {
+            color: "#cbd5e1",
+            width: 2,
+          },
+        },
         axisLabel: {
           formatter: "{yyyy}-{MM}-{dd}",
+          fontSize: 11,
+          color: "#64748b",
         },
         splitLine: {
+          show: false,
+        },
+        axisTick: {
           show: true,
           lineStyle: {
-            type: "dashed",
-            color: "#e5e7eb",
+            color: "#cbd5e1",
           },
         },
       },
       yAxis: {
         type: "value",
         show: false,
-        min: -0.5,
-        max: 2.5,
+        min: -1,
+        max: 1,
       },
       series: [
         {
           type: "scatter",
           data: seriesData,
-          symbolSize: 15,
+          symbolSize: 12,
           emphasis: {
-            scale: 1.5,
+            scale: 1.8,
+            focus: "self",
           },
           label: {
             show: false,
-          },
-        },
-        {
-          type: "line",
-          data: seriesData.map((item) => item.value),
-          smooth: true,
-          symbol: "none",
-          lineStyle: {
-            color: "#cbd5e1",
-            width: 2,
-            type: "dashed",
-          },
-          emphasis: {
-            disabled: true,
           },
         },
       ],
@@ -170,18 +158,18 @@ export function TimelineChart({ timeline = [] }: TimelineChartProps) {
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <Clock className="h-5 w-5 text" /> Project Timeline
+          <Clock className="h-5 w-5" /> Project Timeline
         </CardTitle>
         <CardDescription>
           Major milestones and changes in project history ({timeline.length} events)
         </CardDescription>
       </CardHeader>
       <CardContent>
-        {/* Chart */}
-        <div ref={chartRef} style={{ width: "100%", height: "400px" }} />
+        {/* Chart - 1D Timeline */}
+        <div ref={chartRef} style={{ width: "100%", height: "120px" }} />
 
         {/* Legend */}
-        <div className="flex flex-wrap gap-3 mt-4 justify-center">
+        <div className="flex flex-wrap gap-3 mt-6 justify-center">
           {Object.entries(EVENT_TYPE_LABELS).map(([type, label]) => (
             <div key={type} className="flex items-center gap-2">
               <div
