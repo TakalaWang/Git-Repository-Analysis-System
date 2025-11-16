@@ -1,4 +1,4 @@
-name: CD (Continuous Deployment)
+name: CD
 
 on:
   push:
@@ -17,60 +17,68 @@ jobs:
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
           script: |
-            set -e
+            set -euo pipefail
 
-            APP_DIR="${{ secrets.VM_APP_DIR || '$HOME/git-repo-analysis' }}"
+            APP_DIR="${{ secrets.VM_APP_DIR }}"; APP_DIR="${APP_DIR:-$HOME/git-repo-analysis}"
             REPO_URL="https://github.com/${{ github.repository }}.git"
-            PORT="${{ secrets.DEPLOY_PORT || '3000' }}"
+            PORT="${{ secrets.DEPLOY_PORT }}"; PORT="${PORT:-3000}"
 
+            echo "APP_DIR=$APP_DIR  PORT=$PORT"
+
+            # ===== Repo =====
+            mkdir -p "$APP_DIR"
             cd "$APP_DIR"
 
-            echo "Stopping existing application..."
+            if [ ! -d .git ]; then
+              git clone "$REPO_URL" .
+            else
+              git fetch origin
+            fi
+            git checkout -f main
+            git reset --hard origin/main
+
+            # ===== Stop old app (use ss; no lsof needed) =====
+            echo "Stopping existing app (if any)..."
             if [ -f ".next.pid" ]; then
-              OLD_PID=$(cat .next.pid)
-              if ps -p $OLD_PID > /dev/null 2>&1; then
-                kill $OLD_PID || true
+              OLD_PID="$(cat .next.pid || true)"
+              if [ -n "$OLD_PID" ] && ps -p "$OLD_PID" > /dev/null 2>&1; then
+                kill "$OLD_PID" || true
                 sleep 2
-                if ps -p $OLD_PID > /dev/null 2>&1; then
-                  kill -9 $OLD_PID || true
-                fi
+                ps -p "$OLD_PID" > /dev/null 2>&1 && kill -9 "$OLD_PID" || true
               fi
               rm -f .next.pid
             fi
 
-            EXISTING_PROCESS=$(lsof -ti:$PORT || true)
-            if [ -n "$EXISTING_PROCESS" ]; then
-              echo "Killing process on port $PORT: $EXISTING_PROCESS"
-              kill -9 $EXISTING_PROCESS || true
+            PID="$(ss -tulpn 2>/dev/null | grep ":$PORT " | awk '{split($NF,a,\","); print a[2]}' | head -n1 || true)"
+            if [ -n "$PID" ]; then
+              echo "Killing process on port $PORT (PID: $PID)"
+              kill -9 "$PID" || true
               sleep 1
+            else
+              echo "No process found on port $PORT"
             fi
 
-            echo "Pulling latest code..."
-            git pull origin main
-
-            echo "Installing dependencies..."
+            # ===== Build & start (pnpm is already installed on VM) =====
+            echo "Installing deps..."
             pnpm install --frozen-lockfile
 
-            echo "Building application..."
-            export FIREBASE_SERVICE_ACCOUNT_JSON_PATH="$APP_DIR/service-account-file.json"
+            echo "Building..."
             export NEXT_TELEMETRY_DISABLED=1
+            export FIREBASE_SERVICE_ACCOUNT_JSON_PATH="$APP_DIR/service-account-file.json"
             pnpm build
 
-            echo "Starting application on port $PORT..."
-            export PORT=$PORT
+            echo "Starting app on port $PORT..."
+            export PORT="$PORT"
             nohup pnpm start > app.log 2>&1 &
             echo $! > .next.pid
 
             sleep 5
-
-            if ps -p $(cat .next.pid) > /dev/null 2>&1; then
-              echo "Application started successfully! PID: $(cat .next.pid)"
-              echo "Log file: $APP_DIR/app.log"
-              echo "Application should be available on port $PORT"
+            if ps -p "$(cat .next.pid)" > /dev/null 2>&1; then
+              echo "Started. PID=$(cat .next.pid)"
+              echo "Logs: $APP_DIR/app.log"
             else
-              echo "Failed to start application"
-              echo "Last 20 lines of log:"
-              tail -20 app.log
+              echo "Start failed. Last 50 lines:"
+              tail -50 app.log || true
               exit 1
             fi
 
