@@ -1,0 +1,1 @@
+allowed-build-scripts=@firebase/util protobufjs sharp unrs-resolver

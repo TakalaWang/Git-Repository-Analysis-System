@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Deploy & Build
+      - name: Deploy & Build on VM (latest Node + pnpm; fix libatomic & approve builds)
         uses: appleboy/ssh-action@v1.2.3
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -19,16 +19,15 @@ jobs:
           script: |
             set -euo pipefail
 
-            # ===== Parameters (no secrets leave the VM) =====
+            # ===== Parameters =====
             APP_DIR="${{ secrets.VM_APP_DIR }}"; APP_DIR="${APP_DIR:-$HOME/git-repo-analysis}"
             REPO_URL="https://github.com/${{ github.repository }}.git"
             PORT="${{ secrets.DEPLOY_PORT }}"; PORT="${PORT:-3000}"
-            SERVICE_NAME="${SERVICE_NAME:-git-repo-analysis}"  # systemd unit name if you use one
+            SERVICE_NAME="${SERVICE_NAME:-git-repo-analysis}"
 
             echo "APP_DIR=$APP_DIR  PORT=$PORT"
 
-            # ===== Install/Upgrade to the latest Node using nvm, then enable latest pnpm via corepack =====
-            # We install nvm to $HOME/.nvm (no sudo), then always switch to the latest Node ("node" channel).
+            # ===== Install latest Node via nvm, enable latest pnpm via corepack =====
             export NVM_DIR="$HOME/.nvm"
             if [ ! -s "$NVM_DIR/nvm.sh" ]; then
               echo "Installing nvm..."
@@ -43,25 +42,40 @@ jobs:
             nvm alias default node
             nvm use default
 
-            # Enable corepack and activate the latest pnpm
             if command -v corepack >/dev/null 2>&1; then
               corepack enable || true
               corepack prepare pnpm@latest --activate || true
             fi
 
-            # Ensure PNPM_HOME is in PATH (for pnpm launcher installed by corepack or installer)
             export PNPM_HOME="${PNPM_HOME:-$HOME/.local/share/pnpm}"
             export PATH="$PNPM_HOME:$PATH"
 
-            # Fallback: if pnpm still not found, install via official script
             if ! command -v pnpm >/dev/null 2>&1; then
-              echo "pnpm not found; installing via script..."
+              echo "pnpm not found; installing..."
               curl -fsSL https://get.pnpm.io/install.sh | sh -
               export PATH="$PNPM_HOME:$PATH"
             fi
 
-            echo "Node: $(node -v)"
-            echo "pnpm: $(pnpm -v)"
+            need_atomic_fix=false
+            set +e
+            node -e "console.log('node-ok')" >/dev/null 2>&1 || need_atomic_fix=true
+            set -e
+            if $need_atomic_fix; then
+              echo "Node needs libatomic.so.1; installing the libatomic package..."
+              if command -v apt-get >/dev/null 2>&1; then
+                sudo apt-get update -y
+                sudo apt-get install -y libatomic1
+              elif command -v yum >/dev/null 2>&1 || command -v dnf >/dev/null 2>&1; then
+                sudo yum install -y libatomic || sudo dnf install -y libatomic
+              elif command -v apk >/dev/null 2>&1; then
+                sudo apk add --no-cache libatomic
+              else
+                echo "Cannot detect package manager to install libatomic.*"; exit 1
+              fi
+            fi
+
+            echo "Node: $(node -v 2>/dev/null || echo 'missing')"
+            echo "pnpm: $(pnpm -v 2>/dev/null || echo 'missing')"
 
             # ===== Fetch latest code =====
             mkdir -p "$APP_DIR"
@@ -75,11 +89,10 @@ jobs:
               git checkout main || true
             fi
 
-            # ===== Stop existing app (prefer systemd; fallback to pidfile/port kill) =====
+            # ===== Stop existing app =====
             stop_port () {
               local port="$1"
               local pids
-              # Use 'ss' + 'sed' (portable; no awk/lsof dependency)
               pids="$(ss -lptn "sport = :$port" 2>/dev/null | sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p' | sort -u || true)"
               if [ -n "$pids" ]; then
                 echo "Killing processes on port $port: $pids"
@@ -108,16 +121,15 @@ jobs:
               stop_port "$PORT"
             fi
 
-            # ===== Build on VM (env stays on VM) =====
-            echo "Installing dependencies with pnpm..."
+            # ===== Install deps (approve build scripts), then build =====
+            echo "Installing dependencies..."
             pnpm install --frozen-lockfile
 
             echo "Building app..."
             export NEXT_TELEMETRY_DISABLED=1
-            # Your app should read .env and FIREBASE_SERVICE_ACCOUNT_JSON_PATH from files already on the VM
             pnpm build
 
-            # ===== Start app (systemd preferred; fallback to nohup) =====
+            # ===== Start app =====
             if command -v systemctl >/dev/null 2>&1 && systemctl list-units --type=service | grep -q "$SERVICE_NAME"; then
               echo "Starting via systemd: $SERVICE_NAME"
               sudo systemctl start "$SERVICE_NAME"
@@ -130,6 +142,7 @@ jobs:
               sleep 5
               if ps -p "$(cat .next.pid)" >/dev/null 2>&1; then
                 echo "Started. PID=$(cat .next.pid)"
+                echo "Logs: $APP_DIR/app.log"
               else
                 echo "Start failed. Last 80 lines:"
                 tail -80 app.log || true

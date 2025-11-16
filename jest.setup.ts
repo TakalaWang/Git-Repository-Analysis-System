@@ -2,7 +2,7 @@
 import "@testing-library/jest-dom"
 
 // Mock environment variables
-process.env.GEMINI_API_KEY = "test-api-key"
+process.env.GENAI_API_KEY = "test-api-key"
 process.env.FIREBASE_PROJECT_ID = "test-project"
 process.env.GOOGLE_APPLICATION_CREDENTIALS = "./service-account-file.json"
 
