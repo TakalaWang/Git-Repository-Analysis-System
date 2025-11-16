@@ -137,7 +137,7 @@ jobs:
             else
               echo "Starting via nohup on port $PORT..."
               export PORT="$PORT"
-              nohup pnpm start -- -p "$PORT" > app.log 2>&1 &
+              nohup pnpm start > app.log 2>&1 &
               echo $! > .next.pid
               sleep 5
               if ps -p "$(cat .next.pid)" >/dev/null 2>&1; then
