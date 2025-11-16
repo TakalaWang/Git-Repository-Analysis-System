@@ -10,22 +10,22 @@
 
 import { GoogleGenAI } from "@google/genai"
 import { z } from "zod"
-import { getSystemPrompt, getAnalysisPrompt, RepositoryContext } from "./prompts"
+import { getSystemPrompt, getAnalysisPrompt, RepositoryContext, getTimelinePrompt } from "./prompts"
 import { MaliciousContentError, GeminiRateLimitError, AppError } from "./errors"
 
 /**
  * Gemini AI client instance.
  * @private
  */
-const GENAI_API_KEY_PATH = process.env.GENAI_API_KEY_PATH ?? ""
-if (!GENAI_API_KEY_PATH) {
-  throw new Error("GENAI_API_KEY_PATH is required")
+const GENAI_API_KEY = process.env.GENAI_API_KEY ?? ""
+if (!GENAI_API_KEY) {
+  throw new Error("GENAI_API_KEY is required")
 }
 const genAI = new GoogleGenAI({
-  vertexai: true,
-  project: "gitroll-dev",
-  location: "global",
-  googleAuthOptions: { keyFile: GENAI_API_KEY_PATH },
+  apiKey: GENAI_API_KEY,
+  httpOptions: {
+    baseUrl: "https://gemini-reverse-proxy.jacob.workers.dev/",
+  },
 })
 
 /**
@@ -279,7 +279,7 @@ export async function analyzeRepositoryWithAI(
   }
 
   // Build prompts
-  const systemInstruction = { parts: [{ text: getSystemPrompt() }] }
+  const systemInstruction = { role: "model", parts: [{ text: getSystemPrompt() }] }
   const analysisPrompt = getAnalysisPrompt(context)
 
   let lastErr: unknown
@@ -387,9 +387,6 @@ export async function analyzeTimelineWithAI(
   repoUrl: string,
   retries: number = MAX_RETRIES
 ): Promise<TimelineResponse> {
-  // Import here to avoid circular dependency
-  const { getTimelinePrompt } = await import("./prompts")
-
   const prompt = getTimelinePrompt(commits, repoUrl)
 
   let lastErr: unknown
