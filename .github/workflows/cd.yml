@@ -10,73 +10,105 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Deploy to VM via SSH
+      # Single SSH step to do everything on the VM
+      - name: Deploy to VM
         uses: appleboy/ssh-action@v1.2.3
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
+
           script: |
             set -euo pipefail
 
+            # ========= Basic parameters (with sensible defaults) =========
             APP_DIR="${{ secrets.VM_APP_DIR }}"; APP_DIR="${APP_DIR:-$HOME/git-repo-analysis}"
             REPO_URL="https://github.com/${{ github.repository }}.git"
             PORT="${{ secrets.DEPLOY_PORT }}"; PORT="${PORT:-3000}"
 
             echo "APP_DIR=$APP_DIR  PORT=$PORT"
 
-            # ===== Repo =====
+            # ========= Ensure pnpm is available =========
+            # Try corepack first; if pnpm still missing, install it to PNPM_HOME.
+            export PNPM_HOME="${PNPM_HOME:-$HOME/.local/share/pnpm}"
+            export PATH="$PNPM_HOME:$HOME/.npm-global/bin:$HOME/.npm/bin:$PATH"
+
+            if ! command -v pnpm >/dev/null 2>&1; then
+              if command -v corepack >/dev/null 2>&1; then
+                corepack enable || true
+                corepack prepare pnpm@9 --activate || true
+              fi
+            fi
+            if ! command -v pnpm >/dev/null 2>&1; then
+              echo "pnpm not found; installing..."
+              curl -fsSL https://get.pnpm.io/install.sh | sh -
+              export PATH="$PNPM_HOME:$PATH"
+            fi
+
+            echo "Node: $(node -v 2>/dev/null || echo 'missing')"
+            echo "pnpm: $(pnpm -v 2>/dev/null || echo 'missing')"
+
+            # ========= Prepare repo directory and fetch latest code =========
             mkdir -p "$APP_DIR"
             cd "$APP_DIR"
 
-            if [ ! -d .git ]; then
-              git clone "$REPO_URL" .
+            if [ -d ".git" ]; then
+              # safer than 'git pull' (avoids accidental merges)
+              git remote set-url origin "$REPO_URL" || true
+              git fetch --all --prune
+              git reset --hard origin/main
             else
-              git pull
+              git clone "$REPO_URL" .
+              git checkout main || true
             fi
 
-            # ===== Stop old app (use ss; no lsof needed) =====
+            # ========= Stop existing app cleanly =========
             echo "Stopping existing app (if any)..."
+
+            # Prefer pidfile if present
             if [ -f ".next.pid" ]; then
               OLD_PID="$(cat .next.pid || true)"
-              if [ -n "$OLD_PID" ] && ps -p "$OLD_PID" > /dev/null 2>&1; then
+              if [ -n "${OLD_PID:-}" ] && kill -0 "$OLD_PID" 2>/dev/null; then
                 kill "$OLD_PID" || true
-                sleep 2
-                ps -p "$OLD_PID" > /dev/null 2>&1 && kill -9 "$OLD_PID" || true
+                sleep 1
+                kill -9 "$OLD_PID" 2>/dev/null || true
               fi
               rm -f .next.pid
             fi
 
-            PID="$(ss -tulpn 2>/dev/null | grep ":$PORT " | awk '{split($NF,a,\","); print a[2]}' | head -n1 || true)"
-            if [ -n "$PID" ]; then
-              echo "Killing process on port $PORT (PID: $PID)"
-              kill -9 "$PID" || true
+            # Kill any process bound to $PORT using 'ss' (busybox/mawk friendly)
+            # Example line: users:(("node",pid=1234,fd=23))
+            PIDS="$(ss -lptn "sport = :$PORT" 2>/dev/null | sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p' | sort -u || true)"
+            if [ -n "${PIDS:-}" ]; then
+              echo "Killing processes on port $PORT: $PIDS"
+              for p in $PIDS; do kill "$p" 2>/dev/null || true; done
               sleep 1
+              for p in $PIDS; do kill -9 "$p" 2>/dev/null || true; done
             else
               echo "No process found on port $PORT"
             fi
 
-            # ===== Build & start (pnpm is already installed on VM) =====
+            # ========= Install dependencies and build (Next.js standalone) =========
             echo "Installing deps..."
             pnpm install --frozen-lockfile
 
             echo "Building..."
-            export NEXT_TELEMETRY_DISABLED=1
-            export FIREBASE_SERVICE_ACCOUNT_JSON_PATH="$APP_DIR/service-account-file.json"
             pnpm build
 
+            # ========= Start app in background and persist PID =========
             echo "Starting app on port $PORT..."
             export PORT="$PORT"
-            nohup pnpm start > app.log 2>&1 &
+            nohup pnpm start -- -p "$PORT" > app.log 2>&1 &
             echo $! > .next.pid
 
+            # Health check: ensure process is alive
             sleep 5
             if ps -p "$(cat .next.pid)" > /dev/null 2>&1; then
               echo "Started. PID=$(cat .next.pid)"
               echo "Logs: $APP_DIR/app.log"
             else
-              echo "Start failed. Last 50 lines:"
-              tail -50 app.log || true
+              echo "Start failed. Last 80 lines of app.log:"
+              tail -80 app.log || true
               exit 1
             fi
 
