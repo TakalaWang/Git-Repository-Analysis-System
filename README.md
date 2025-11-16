@@ -255,8 +255,6 @@ The system follows a **serverless architecture** with clear separation between c
 
 #### Next.js 15 (App Router)
 
-**Why:**
-
 - **Server Components**: Reduces client-side JavaScript, improves performance
 - **Built-in Routing**: File-based routing with dynamic routes
 - **API Routes**: Co-located backend with frontend code
@@ -264,15 +262,11 @@ The system follows a **serverless architecture** with clear separation between c
 
 #### React
 
-**Why:**
-
 - **Latest Features**: Enhanced Server Components and Suspense
 - **Performance**: Better hydration and rendering performance
 - **Developer Experience**: Improved error handling and debugging
 
 #### TypeScript
-
-**Why:**
 
 - **Type Safety**: Catches errors at compile time
 - **IntelliSense**: Better IDE autocomplete and documentation
@@ -281,15 +275,11 @@ The system follows a **serverless architecture** with clear separation between c
 
 #### Tailwind CSS + shadcn/ui
 
-**Why:**
-
 - **Utility-First**: Rapid UI development without CSS files
 - **Consistency**: Design system with standardized spacing and colors
 - **Components**: Pre-built, accessible UI components
 
 #### ECharts
-
-**Why:**
 
 - **Powerful Visualization**: Rich chart types and interactivity
 - **Customization**: Highly customizable with extensive options
@@ -300,8 +290,6 @@ The system follows a **serverless architecture** with clear separation between c
 
 #### Firebase Authentication
 
-**Why:**
-
 - **Built-in Providers**: Google/GitHub OAuth with minimal setup
 - **Security**: Token-based authentication with automatic refresh
 - **Integration**: Seamless Firestore security rules integration
@@ -309,16 +297,12 @@ The system follows a **serverless architecture** with clear separation between c
 
 #### Firestore Database
 
-**Why:**
-
 - **Real-time**: Live updates without polling or WebSockets
 - **Serverless**: No database server to manage
 - **Security**: Row-level access control with security rules
 - **Offline Support**: Client-side caching and offline mode
 
 #### Google Gemini
-
-**Why:**
 
 - **Developer Friendly**: Easy API integration with REST
 - **Speed**: Fast inference for real-time analysis
@@ -328,8 +312,6 @@ The system follows a **serverless architecture** with clear separation between c
 ### CI/CD
 
 #### GitHub Actions with SSH
-
-**Why:**
 
 - **Automation**: Automated testing and deployment on push
 - **Flexibility**: Custom workflows with community actions
