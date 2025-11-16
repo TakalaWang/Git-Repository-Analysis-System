@@ -32,10 +32,8 @@ jobs:
             if [ ! -d .git ]; then
               git clone "$REPO_URL" .
             else
-              git fetch origin
+              git pull
             fi
-            git checkout -f main
-            git reset --hard origin/main
 
             # ===== Stop old app (use ss; no lsof needed) =====
             echo "Stopping existing app (if any)..."
