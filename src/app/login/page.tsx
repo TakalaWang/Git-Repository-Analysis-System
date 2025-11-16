@@ -130,17 +130,17 @@ export default function LoginPage() {
 const features = [
   {
     icon: <BarChart className="h-5 w-5 text-blue-600" />,
-    title: "Unlimited Analysis",
-    desc: "Scan unlimited repositories without daily limits",
+    title: "AI-Powered Repository Analysis",
+    desc: "Analyze Git repositories with Google Gemini AI to understand code structure, architecture, and best practices",
   },
   {
     icon: <Shield className="h-5 w-5 text-blue-600" />,
-    title: "Analysis History",
-    desc: "Access your complete scan history and results anytime",
+    title: "Complete Project Insights",
+    desc: "Automatic detection of languages, frameworks, dependencies, and project timeline with visual charts",
   },
   {
     icon: <Zap className="h-5 w-5 text-blue-600" />,
-    title: "Priority Processing",
-    desc: "Get faster analysis results with priority queue access",
+    title: "Scan History & Management",
+    desc: "Access all your analysis results anytime with quota management and real-time progress tracking",
   },
 ]
